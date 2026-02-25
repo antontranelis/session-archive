@@ -1,0 +1,3 @@
+markdown
+chromadb
+neo4j
