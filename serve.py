@@ -249,7 +249,7 @@ def get_graph_data():
         # Get all nodes
         result = session.run("""
             MATCH (n)
-            WHERE n:Session OR n:Tag OR n:Person OR n:Concept OR n:Decision OR n:Question
+            WHERE n:Session OR n:Tag OR n:Person OR n:Concept OR n:Decision OR n:Question OR n:Memory
             RETURN id(n) as neo_id, labels(n) as labels, properties(n) as props
         """)
         node_map = {}  # neo_id → index
@@ -278,6 +278,11 @@ def get_graph_data():
                 node["name"] = props.get("name", "?")
             elif label == "Question":
                 node["name"] = props.get("name", "?")
+            elif label == "Memory":
+                node["name"] = props.get("short", props.get("id", "?"))[:60]
+                node["source"] = props.get("source", "")
+                node["typ"] = props.get("typ", "")
+                node["datum"] = props.get("datum", "")
             nodes.append(node)
 
         # Get all relationships
@@ -1634,20 +1639,24 @@ def render_graph_page():
   const typeColors = {{
     Session: '#007acc', Tag: '#c586c0', Person: '#6a9955',
     Concept: '#569cd6', Decision: '#dcdcaa', Question: '#f44747',
+    Memory: '#ce9178',
   }};
   const typeLabels = {{
     Session: 'Session', Tag: 'Tag', Person: 'Person',
     Concept: 'Konzept', Decision: 'Entscheidung', Question: 'Offene Frage',
+    Memory: 'Erinnerung',
   }};
   const edgeLabels = {{
     TAGGED: 'getaggt', BY: 'von', FOLLOWS: 'danach', SIMILAR: 'ähnlich',
     DISCUSSES: 'diskutiert', LED_TO: 'entschieden', RAISED: 'aufgeworfen', MENTIONS: 'erwähnt',
+    ABOUT: 'über', DURING: 'während', RELATES_TO: 'bezieht sich auf',
   }};
   const userColors = {{ anton: '#007acc', timo: '#e5a33d' }};
   const edgeColors = {{
     TAGGED: '#c586c066', BY: '#6a995566', FOLLOWS: '#3c3c3c44',
     SIMILAR: '#ce917866', DISCUSSES: '#569cd666', LED_TO: '#dcdcaa66',
     RAISED: '#f4474766', MENTIONS: '#6a995544',
+    ABOUT: '#ce917844', DURING: '#ce917833', RELATES_TO: '#569cd633',
   }};
 
   let graphData = null;
@@ -1837,6 +1846,7 @@ def render_graph_page():
       if (d.type === 'Concept') return 13;
       if (d.type === 'Decision') return 8;
       if (d.type === 'Question') return 8;
+      if (d.type === 'Memory') return 4;
       return 4 + Math.min(d.msg_count || 0, 200) / 20;
     }}
 
