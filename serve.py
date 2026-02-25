@@ -249,7 +249,7 @@ def get_graph_data():
         # Get all nodes
         result = session.run("""
             MATCH (n)
-            WHERE n:Session OR n:Tag OR n:Person OR n:Concept OR n:Decision OR n:Question OR n:Memory
+            WHERE n:Session OR n:Tag OR n:Person OR n:Concept OR n:Decision OR n:Question
             RETURN id(n) as neo_id, labels(n) as labels, properties(n) as props
         """)
         node_map = {}  # neo_id → index
@@ -278,11 +278,6 @@ def get_graph_data():
                 node["name"] = props.get("name", "?")
             elif label == "Question":
                 node["name"] = props.get("name", "?")
-            elif label == "Memory":
-                node["name"] = props.get("short", props.get("id", "?"))[:60]
-                node["source"] = props.get("source", "")
-                node["typ"] = props.get("typ", "")
-                node["datum"] = props.get("datum", "")
             nodes.append(node)
 
         # Get all relationships
@@ -305,6 +300,34 @@ def get_graph_data():
                 links.append(link)
 
     return {"nodes": nodes, "links": links}
+
+
+def get_node_memories(neo_id):
+    """Get all Memory nodes connected to a given node, with full text."""
+    if not neo4j_driver:
+        return []
+
+    memories = []
+    with neo4j_driver.session() as session:
+        result = session.run("""
+            MATCH (n)-[r]-(m:Memory)
+            WHERE id(n) = $neo_id
+            RETURN m.text as text, m.short as short, m.typ as typ, m.datum as datum,
+                   m.source as source, m.thema as thema, m.bedeutung as bedeutung,
+                   type(r) as rel_type
+            ORDER BY m.datum DESC, m.typ
+        """, neo_id=neo_id)
+        for record in result:
+            memories.append({
+                "text": record["text"] or record["short"] or "",
+                "typ": record["typ"] or "",
+                "datum": record["datum"] or "",
+                "source": record["source"] or "",
+                "thema": record["thema"] or "",
+                "bedeutung": record["bedeutung"] or "",
+                "rel": record["rel_type"] or "",
+            })
+    return memories
 
 
 def graph_query(query_type: str, params: dict) -> dict:
@@ -1521,6 +1544,17 @@ def render_graph_page():
     z-index: 20; overflow-y: auto; display: none; padding: 1.2rem;
   }}
   .detail-panel.open {{ display: block; }}
+  /* Memory items in detail panel */
+  .mem-loading {{ font-size: 0.7rem; color: var(--fg-dim); font-style: italic; margin-top: 0.5rem; }}
+  .mem-group {{ margin-bottom: 0.6rem; }}
+  .mem-typ {{ font-size: 0.65rem; color: #ce9178; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; margin: 0.6rem 0 0.25rem; padding-bottom: 0.15rem; border-bottom: 1px solid #ce917822; }}
+  .mem-item {{ font-size: 0.72rem; color: var(--fg-dim); padding: 0.35rem 0; border-bottom: 1px solid #ffffff06; line-height: 1.5; }}
+  .mem-datum {{ color: #888; font-size: 0.62rem; font-family: var(--mono, monospace); }}
+  .mem-text, .mem-preview {{ color: var(--fg); }}
+  .mem-full {{ color: var(--fg); white-space: pre-wrap; margin-top: 0.2rem; padding: 0.4rem; background: #ffffff05; border-radius: 4px; border-left: 2px solid #ce917844; }}
+  .mem-toggle {{ color: #ce9178; font-size: 0.62rem; cursor: pointer; margin-left: 0.3rem; }}
+  .mem-toggle:hover {{ text-decoration: underline; }}
+  .mem-bedeutung {{ color: var(--fg-dim); font-size: 0.62rem; margin-top: 0.15rem; font-style: italic; opacity: 0.8; }}
   .detail-close {{
     position: absolute; top: 0.8rem; right: 0.8rem;
     background: none; border: none; color: var(--fg-dim); font-size: 1.2rem;
@@ -1639,24 +1673,20 @@ def render_graph_page():
   const typeColors = {{
     Session: '#007acc', Tag: '#c586c0', Person: '#6a9955',
     Concept: '#569cd6', Decision: '#dcdcaa', Question: '#f44747',
-    Memory: '#ce9178',
   }};
   const typeLabels = {{
     Session: 'Session', Tag: 'Tag', Person: 'Person',
     Concept: 'Konzept', Decision: 'Entscheidung', Question: 'Offene Frage',
-    Memory: 'Erinnerung',
   }};
   const edgeLabels = {{
     TAGGED: 'getaggt', BY: 'von', FOLLOWS: 'danach', SIMILAR: 'ähnlich',
     DISCUSSES: 'diskutiert', LED_TO: 'entschieden', RAISED: 'aufgeworfen', MENTIONS: 'erwähnt',
-    ABOUT: 'über', DURING: 'während', RELATES_TO: 'bezieht sich auf',
   }};
   const userColors = {{ anton: '#007acc', timo: '#e5a33d' }};
   const edgeColors = {{
     TAGGED: '#c586c066', BY: '#6a995566', FOLLOWS: '#3c3c3c44',
     SIMILAR: '#ce917866', DISCUSSES: '#569cd666', LED_TO: '#dcdcaa66',
     RAISED: '#f4474766', MENTIONS: '#6a995544',
-    ABOUT: '#ce917844', DURING: '#ce917833', RELATES_TO: '#569cd633',
   }};
 
   let graphData = null;
@@ -1773,8 +1803,76 @@ def render_graph_page():
       html += '</div>';
     }});
 
+    // Placeholder for memories
+    html += '<div id="memories-section"><div class="mem-loading">Erinnerungen laden...</div></div>';
     detailContent.innerHTML = html;
     detailPanel.classList.add('open');
+
+    // Fetch memories for this node
+    fetch(BASE + '/api/graph/memories?neo_id=' + d.neo_id)
+      .then(r => r.json())
+      .then(mems => {{
+        const memSection = document.getElementById('memories-section');
+        if (!memSection) return;
+        if (!mems.length) {{ memSection.innerHTML = ''; return; }}
+
+        let mhtml = '<div class="detail-section"><h3 style="color:#ce9178">Erinnerungen (' + mems.length + ')</h3>';
+
+        // Group by typ
+        const byTyp = {{}};
+        mems.forEach(m => {{
+          const t = m.typ || 'sonstiges';
+          if (!byTyp[t]) byTyp[t] = [];
+          byTyp[t].push(m);
+        }});
+
+        Object.keys(byTyp).sort().forEach(typ => {{
+          const items = byTyp[typ];
+          mhtml += '<div class="mem-group">';
+          mhtml += '<div class="mem-typ">' + escHtml(typ) + ' (' + items.length + ')</div>';
+          items.forEach(m => {{
+            const isLong = m.text && m.text.length > 120;
+            const preview = isLong ? m.text.substring(0, 120) + '...' : (m.text || '');
+            mhtml += '<div class="mem-item">';
+            if (m.datum) mhtml += '<span class="mem-datum">' + escHtml(m.datum) + '</span> ';
+            if (isLong) {{
+              mhtml += '<span class="mem-preview">' + escHtml(preview) + '</span>';
+              mhtml += '<div class="mem-full" style="display:none">' + escHtml(m.text) + '</div>';
+              mhtml += '<span class="mem-toggle">mehr lesen</span>';
+            }} else {{
+              mhtml += '<span class="mem-text">' + escHtml(m.text || m.thema || '') + '</span>';
+            }}
+            if (m.bedeutung) mhtml += '<div class="mem-bedeutung">' + escHtml(m.bedeutung) + '</div>';
+            mhtml += '</div>';
+          }});
+          mhtml += '</div>';
+        }});
+
+        mhtml += '</div>';
+        memSection.innerHTML = mhtml;
+
+        // Toggle full text
+        memSection.querySelectorAll('.mem-toggle').forEach(el => {{
+          el.addEventListener('click', () => {{
+            const item = el.closest('.mem-item');
+            const preview = item.querySelector('.mem-preview');
+            const full = item.querySelector('.mem-full');
+            if (full.style.display === 'none') {{
+              full.style.display = 'block';
+              preview.style.display = 'none';
+              el.textContent = 'weniger';
+            }} else {{
+              full.style.display = 'none';
+              preview.style.display = 'inline';
+              el.textContent = 'mehr lesen';
+            }}
+          }});
+        }});
+      }})
+      .catch(() => {{
+        const memSection = document.getElementById('memories-section');
+        if (memSection) memSection.innerHTML = '';
+      }});
 
     // Click on neighbor items to focus them
     detailContent.querySelectorAll('[data-focus-id]').forEach(el => {{
@@ -1846,7 +1944,6 @@ def render_graph_page():
       if (d.type === 'Concept') return 13;
       if (d.type === 'Decision') return 8;
       if (d.type === 'Question') return 8;
-      if (d.type === 'Memory') return 4;
       return 4 + Math.min(d.msg_count || 0, 200) / 20;
     }}
 
@@ -1901,7 +1998,7 @@ def render_graph_page():
 
     labelElements = g.append('g')
       .selectAll('text')
-      .data(data.nodes.filter(d => d.type !== 'Session' && d.type !== 'Memory'))
+      .data(data.nodes.filter(d => d.type !== 'Session'))
       .join('text')
       .text(d => {{
         if (d.type === 'Decision' || d.type === 'Question') return d.name.length > 35 ? d.name.substring(0, 32) + '...' : d.name;
@@ -2348,6 +2445,11 @@ class ArchiveHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/graph":
             data = get_graph_data()
+            self.respond(200, json.dumps(data, ensure_ascii=False), content_type="application/json; charset=utf-8")
+
+        elif path == "/api/graph/memories":
+            neo_id = int(params.get("neo_id", ["0"])[0])
+            data = get_node_memories(neo_id)
             self.respond(200, json.dumps(data, ensure_ascii=False), content_type="application/json; charset=utf-8")
 
         elif path == "/api/graph/query":
