@@ -1901,7 +1901,7 @@ def render_graph_page():
 
     labelElements = g.append('g')
       .selectAll('text')
-      .data(data.nodes.filter(d => d.type !== 'Session'))
+      .data(data.nodes.filter(d => d.type !== 'Session' && d.type !== 'Memory'))
       .join('text')
       .text(d => {{
         if (d.type === 'Decision' || d.type === 'Question') return d.name.length > 35 ? d.name.substring(0, 32) + '...' : d.name;
