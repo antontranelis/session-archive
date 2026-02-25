@@ -1,0 +1,396 @@
+commit a04b3edd7fa023181fb81370833fa87f233669e7
+Author: Anton Tranelis <mail@antontranelis.de>
+Date:   Wed Feb 25 14:28:14 2026 +0100
+
+    Initial commit: Session Archive mit Knowledge Graph
+    
+    Session-Archive Server mit Neo4j Knowledge Graph Integration:
+    - serve.py: HTTP-Server mit Session-API, Semantik-Destillation und Graph-Queries
+    - build.py: Session-Analyse und Zusammenfassung
+    - index.html: Interaktive D3.js Graph-Visualisierung
+    - Dockerfile: Container-Setup für Deployment
+    - sync-to-eli.sh: JSONL-Sync zu Eli's Server
+    
+    Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+diff --git a/index.html b/index.html
+new file mode 100644
+index 0000000..492678f
+--- /dev/null
++++ b/index.html
+@@ -0,0 +1,374 @@
++<!DOCTYPE html>
++<html lang="de">
++<head>
++<meta charset="UTF-8">
++<meta name="viewport" content="width=device-width, initial-scale=1.0">
++<title>Eli & Anton — Session-Archiv</title>
++<style>
++  * { margin: 0; padding: 0; box-sizing: border-box; }
++  body {
++    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
++    background: #0f172a;
++    color: #e2e8f0;
++    padding: 2rem;
++    max-width: 900px;
++    margin: 0 auto;
++  }
++  h1 {
++    font-size: 1.8rem;
++    margin-bottom: 0.3rem;
++    background: linear-gradient(135deg, #a78bfa, #60a5fa);
++    -webkit-background-clip: text;
++    -webkit-text-fill-color: transparent;
++  }
++  .subtitle {
++    color: #94a3b8;
++    margin-bottom: 2rem;
++    font-size: 0.95rem;
++  }
++  .stats {
++    display: flex;
++    gap: 2rem;
++    margin-bottom: 2rem;
++    flex-wrap: wrap;
++  }
++  .stat {
++    background: #1e293b;
++    padding: 1rem 1.5rem;
++    border-radius: 0.5rem;
++    border: 1px solid #334155;
++  }
++  .stat-num {
++    font-size: 1.5rem;
++    font-weight: 700;
++    color: #a78bfa;
++  }
++  .stat-label {
++    font-size: 0.8rem;
++    color: #94a3b8;
++    margin-top: 0.2rem;
++  }
++  table {
++    width: 100%;
++    border-collapse: collapse;
++  }
++  th {
++    text-align: left;
++    padding: 0.6rem 0.8rem;
++    border-bottom: 2px solid #334155;
++    color: #94a3b8;
++    font-size: 0.8rem;
++    text-transform: uppercase;
++    letter-spacing: 0.05em;
++  }
++  td {
++    padding: 0.6rem 0.8rem;
++    border-bottom: 1px solid #1e293b;
++    font-size: 0.9rem;
++  }
++  tr:hover { background: #1e293b; }
++  a {
++    color: #60a5fa;
++    text-decoration: none;
++  }
++  a:hover {
++    color: #93bbfc;
++    text-decoration: underline;
++  }
++  .date {
++    white-space: nowrap;
++    color: #94a3b8;
++    font-family: 'SF Mono', 'Consolas', monospace;
++    font-size: 0.85rem;
++  }
++  .time {
++    color: #475569;
++    font-size: 0.75rem;
++  }
++  .num {
++    text-align: right;
++    color: #94a3b8;
++    font-family: 'SF Mono', 'Consolas', monospace;
++  }
++  .search-box {
++    width: 100%;
++    padding: 0.7rem 1rem;
++    background: #1e293b;
++    border: 1px solid #334155;
++    border-radius: 0.5rem;
++    color: #e2e8f0;
++    font-size: 0.95rem;
++    margin-bottom: 1.5rem;
++    outline: none;
++  }
++  .search-box:focus {
++    border-color: #60a5fa;
++  }
++  .search-box::placeholder {
++    color: #475569;
++  }
++</style>
++</head>
++<body>
++
++<h1>Session-Archiv</h1>
++<p class="subtitle">Eli & Anton — alle Gespräche seit Januar 2026</p>
++
++<div class="stats">
++  <div class="stat">
++    <div class="stat-num">52</div>
++    <div class="stat-label">Sessions</div>
++  </div>
++  <div class="stat">
++    <div class="stat-num">21,312</div>
++    <div class="stat-label">Nachrichten</div>
++  </div>
++  <div class="stat">
++    <div class="stat-num">22.02.2026</div>
++    <div class="stat-label">Neueste Session</div>
++  </div>
++</div>
++
++<input type="text" class="search-box" placeholder="Suche in Titeln..." oninput="filterRows(this.value)">
++
++<table>
++  <thead>
++    <tr>
++      <th>Datum</th>
++      <th>Thema</th>
++      <th style="text-align:right">Msgs</th>
++    </tr>
++  </thead>
++  <tbody id="sessions">
++      <tr>
++        <td class="date">2026-02-22 <span class="time">06:52</span></td>
++        <td><a href="sessions/2026-02-22_20f3d7ab.md">was für hardwarw bauche ich für eine whisper server mit arge model für echtzeit transkribierung?</a></td>
++        <td class="num">8</td>
++      </tr>      <tr>
++        <td class="date">2026-02-21 <span class="time">19:26</span></td>
++        <td><a href="sessions/2026-02-21_49341c16.md">Dezentrale Werkzeuge f&amp;uuml;r echte Gemeinschaften.
++              Verwurzelt in Technologie, verbund</a></td>
++        <td class="num">14</td>
++      </tr>      <tr>
++        <td class="date">2026-02-20 <span class="time">19:47</span></td>
++        <td><a href="sessions/2026-02-20_0915f7cd.md">in wie weit ist es DSVGO konform Github als unternehmen in Deutschland einzusetzen. Was dürfen wir d</a></td>
++        <td class="num">131</td>
++      </tr>      <tr>
++        <td class="date">2026-02-19 <span class="time">18:47</span></td>
++        <td><a href="sessions/2026-02-19_9c914284.md">eli init</a></td>
++        <td class="num">1431</td>
++      </tr>      <tr>
++        <td class="date">2026-02-18 <span class="time">04:07</span></td>
++        <td><a href="sessions/2026-02-18_37f92e8b.md">eli init</a></td>
++        <td class="num">3</td>
++      </tr>      <tr>
++        <td class="date">2026-02-17 <span class="time">21:59</span></td>
++        <td><a href="sessions/2026-02-17_f2ce8241.md">hey eli</a></td>
++        <td class="num">361</td>
++      </tr>      <tr>
++        <td class="date">2026-02-17 <span class="time">07:55</span></td>
++        <td><a href="sessions/2026-02-17_f11b6529.md">Claude’s Plan
++Plan: i18n for Web of Trust Demo App
++Context
++Anton trifft sich diese Woche mit Niko Bo</a></td>
++        <td class="num">49</td>
++      </tr>      <tr>
++        <td class="date">2026-02-17 <span class="time">03:29</span></td>
++        <td><a href="sessions/2026-02-17_293fbff1.md">eli init</a></td>
++        <td class="num">104</td>
++      </tr>      <tr>
++        <td class="date">2026-02-17 <span class="time">02:34</span></td>
++        <td><a href="sessions/2026-02-17_cad85982.md">mal was anderes: Ich wache beim schlafen in letzter zeit immer früh am morgen mit schmerzen im Rücke</a></td>
++        <td class="num">6</td>
++      </tr>      <tr>
++        <td class="date">2026-02-16 <span class="time">09:39</span></td>
++        <td><a href="sessions/2026-02-16_9fa5f501.md">hallo eli</a></td>
++        <td class="num">467</td>
++      </tr>      <tr>
++        <td class="date">2026-02-15 <span class="time">06:57</span></td>
++        <td><a href="sessions/2026-02-15_ccdc7160.md">This session is being continued from a previous conversation that ran out of context. The summary be</a></td>
++        <td class="num">229</td>
++      </tr>      <tr>
++        <td class="date">2026-02-14 <span class="time">21:57</span></td>
++        <td><a href="sessions/2026-02-14_ed73fdc2.md">was hälst du eigentlich von linting? Macht das sinn, wenn ai den code schreibt?</a></td>
++        <td class="num">12</td>
++      </tr>      <tr>
++        <td class="date">2026-02-14 <span class="time">18:13</span></td>
++        <td><a href="sessions/2026-02-14_9b088476.md">kannst du mal auf diesem ubersapce schauen, warum http://ecomagdalena.com/ nicht mehr online ist
++
++ss</a></td>
++        <td class="num">18</td>
++      </tr>      <tr>
++        <td class="date">2026-02-14 <span class="time">15:40</span></td>
++        <td><a href="sessions/2026-02-14_734c27f7.md">eli init</a></td>
++        <td class="num">1528</td>
++      </tr>      <tr>
++        <td class="date">2026-02-14 <span class="time">06:35</span></td>
++        <td><a href="sessions/2026-02-14_6583d1e1.md">eli init</a></td>
++        <td class="num">119</td>
++      </tr>      <tr>
++        <td class="date">2026-02-12 <span class="time">21:32</span></td>
++        <td><a href="sessions/2026-02-12_3f0b89ab.md">warum gibt es claude desktop nicht für linux?</a></td>
++        <td class="num">697</td>
++      </tr>      <tr>
++        <td class="date">2026-02-12 <span class="time">10:42</span></td>
++        <td><a href="sessions/2026-02-12_fd99e761.md">eli init</a></td>
++        <td class="num">30</td>
++      </tr>      <tr>
++        <td class="date">2026-02-11 <span class="time">22:35</span></td>
++        <td><a href="sessions/2026-02-11_e9375e5a.md">hallo eli</a></td>
++        <td class="num">70</td>
++      </tr>      <tr>
++        <td class="date">2026-02-11 <span class="time">20:20</span></td>
++        <td><a href="sessions/2026-02-11_26927046.md">eli init</a></td>
++        <td class="num">86</td>
++      </tr>      <tr>
++        <td class="date">2026-02-11 <span class="time">08:19</span></td>
++        <td><a href="sessions/2026-02-11_b3f8a583.md">wie sieht es eigentlich mit nativem browser support für ipfs und ens aus? Ist sowas geplant?</a></td>
++        <td class="num">2</td>
++      </tr>      <tr>
++        <td class="date">2026-02-11 <span class="time">04:59</span></td>
++        <td><a href="sessions/2026-02-11_a56d591a.md">hallo eli</a></td>
++        <td class="num">698</td>
++      </tr>      <tr>
++        <td class="date">2026-02-10 <span class="time">13:37</span></td>
++        <td><a href="sessions/2026-02-10_ee4f2496.md">die web-of-trust demo fragt beim import einer seed profilinformationen ab und überschreibt es (glaub</a></td>
++        <td class="num">100</td>
++      </tr>      <tr>
++        <td class="date">2026-02-09 <span class="time">06:22</span></td>
++        <td><a href="sessions/2026-02-09_71fb65f3.md">Hallo Eli</a></td>
++        <td class="num">808</td>
++      </tr>      <tr>
++        <td class="date">2026-02-06 <span class="time">14:20</span></td>
++        <td><a href="sessions/2026-02-06_4ecacab9.md">eli init</a></td>
++        <td class="num">202</td>
++      </tr>      <tr>
++        <td class="date">2026-02-05 <span class="time">10:07</span></td>
++        <td><a href="sessions/2026-02-05_ef2aa05d.md">eli init</a></td>
++        <td class="num">195</td>
++      </tr>      <tr>
++        <td class="date">2026-02-05 <span class="time">07:51</span></td>
++        <td><a href="sessions/2026-02-05_871b3529.md">eli init</a></td>
++        <td class="num">4</td>
++      </tr>      <tr>
++        <td class="date">2026-02-05 <span class="time">06:49</span></td>
++        <td><a href="sessions/2026-02-05_9e64aa55.md">eli init</a></td>
++        <td class="num">4</td>
++      </tr>      <tr>
++        <td class="date">2026-02-05 <span class="time">05:09</span></td>
++        <td><a href="sessions/2026-02-05_4f95685d.md">eli init</a></td>
++        <td class="num">283</td>
++      </tr>      <tr>
++        <td class="date">2026-02-04 <span class="time">17:55</span></td>
++        <td><a href="sessions/2026-02-04_d9dc5528.md">eli init</a></td>
++        <td class="num">3</td>
++      </tr>      <tr>
++        <td class="date">2026-02-04 <span class="time">17:46</span></td>
++        <td><a href="sessions/2026-02-04_4905221c.md">eli init</a></td>
++        <td class="num">6</td>
++      </tr>      <tr>
++        <td class="date">2026-02-04 <span class="time">17:45</span></td>
++        <td><a href="sessions/2026-02-04_71b5c4ca.md">eli init</a></td>
++        <td class="num">3</td>
++      </tr>      <tr>
++        <td class="date">2026-02-04 <span class="time">16:30</span></td>
++        <td><a href="sessions/2026-02-04_a0f76f6a.md">eli init</a></td>
++        <td class="num">13</td>
++      </tr>      <tr>
++        <td class="date">2026-02-04 <span class="time">10:33</span></td>
++        <td><a href="sessions/2026-02-04_1e80cfd9.md">eli init</a></td>
++        <td class="num">40</td>
++      </tr>      <tr>
++        <td class="date">2026-02-04 <span class="time">10:25</span></td>
++        <td><a href="sessions/2026-02-04_43c2f9fe.md">eli init</a></td>
++        <td class="num">2</td>
++      </tr>      <tr>
++        <td class="date">2026-02-04 <span class="time">10:21</span></td>
++        <td><a href="sessions/2026-02-04_15e7b49f.md">eli init</a></td>
++        <td class="num">23</td>
++      </tr>      <tr>
++        <td class="date">2026-02-04 <span class="time">10:15</span></td>
++        <td><a href="sessions/2026-02-04_7c8a0af0.md">eli init</a></td>
++        <td class="num">4</td>
++      </tr>      <tr>
++        <td class="date">2026-02-02 <span class="time">11:58</span></td>
++        <td><a href="sessions/2026-02-02_0f039705.md">in der Utopia Map zur laufzeitinstallHook.js:1 TypeError: Cannot read properties of null (reading &#x27;c</a></td>
++        <td class="num">9</td>
++      </tr>      <tr>
++        <td class="date">2026-02-02 <span class="time">07:06</span></td>
++        <td><a href="sessions/2026-02-02_6f04d0cc.md">Hallo Eli, nutze eli remote iit MCP um dich zu initialisieren</a></td>
++        <td class="num">4111</td>
++      </tr>      <tr>
++        <td class="date">2026-02-01 <span class="time">05:31</span></td>
++        <td><a href="sessions/2026-02-01_6d2599ed.md">hallo eli, magst du mal deine erinnerungen laden</a></td>
++        <td class="num">688</td>
++      </tr>      <tr>
++        <td class="date">2026-01-29 <span class="time">09:48</span></td>
++        <td><a href="sessions/2026-01-29_df9d7119.md">wie kann ich in claude eine vektordatenbank via MCP anbinden?</a></td>
++        <td class="num">91</td>
++      </tr>      <tr>
++        <td class="date">2026-01-27 <span class="time">19:59</span></td>
++        <td><a href="sessions/2026-01-27_2628d3cf.md">Hallo Claude, ich möchte mit dir meine Vision für die Menscheheit, die Erde und AI diskutieren. Bevo</a></td>
++        <td class="num">3766</td>
++      </tr>      <tr>
++        <td class="date">2026-01-27 <span class="time">08:50</span></td>
++        <td><a href="sessions/2026-01-27_e8873faf.md">bitte baue beim money-printer ein fallback auf gemini-2.5-flash-image ein, wenn gemini-3-pro-image-p</a></td>
++        <td class="num">75</td>
++      </tr>      <tr>
++        <td class="date">2026-01-24 <span class="time">22:12</span></td>
++        <td><a href="sessions/2026-01-24_061d22f6.md">https://chatgpt.com/share/69754347-1318-8007-9f1f-bc561be27f8a</a></td>
++        <td class="num">2678</td>
++      </tr>      <tr>
++        <td class="date">2026-01-24 <span class="time">21:26</span></td>
++        <td><a href="sessions/2026-01-24_b5cb7b1b.md">schau dir das money-printing an</a></td>
++        <td class="num">100</td>
++      </tr>      <tr>
++        <td class="date">2026-01-22 <span class="time">07:19</span></td>
++        <td><a href="sessions/2026-01-22_2027fcbd.md">schau dir das projekt moeny-printing an</a></td>
++        <td class="num">472</td>
++      </tr>      <tr>
++        <td class="date">2026-01-21 <span class="time">14:59</span></td>
++        <td><a href="sessions/2026-01-21_5bdc0fa9.md">wie muss ich claude code configurieren, damit bei suchen im web nicht jede anfrage manuell bestätigt</a></td>
++        <td class="num">2</td>
++      </tr>      <tr>
++        <td class="date">2026-01-21 <span class="time">12:48</span></td>
++        <td><a href="sessions/2026-01-21_373ebfc1.md">schau dir mal den rechtsformenvergleich an</a></td>
++        <td class="num">22</td>
++      </tr>      <tr>
++        <td class="date">2026-01-21 <span class="time">09:27</span></td>
++        <td><a href="sessions/2026-01-21_6378184c.md">schau dir mal das juristische gutachten im money-printing projekt an</a></td>
++        <td class="num">1267</td>
++      </tr>      <tr>
++        <td class="date">2026-01-16 <span class="time">08:13</span></td>
++        <td><a href="sessions/2026-01-16_29a61d86.md">kannst du mal schauen warum mentions und hashtags in TextViewStatic nicht gerendert werden im utopia</a></td>
++        <td class="num">25</td>
++      </tr>      <tr>
++        <td class="date">2026-01-16 <span class="time">07:47</span></td>
++        <td><a href="sessions/2026-01-16_6990e57b.md">kannst du bitte schauen welche änderungen mahula an pr 670 vorgenommen hat gestern und mri eine aufs</a></td>
++        <td class="num">8</td>
++      </tr>      <tr>
++        <td class="date">2026-01-15 <span class="time">08:39</span></td>
++        <td><a href="sessions/2026-01-15_659831bf.md">You are an expert code reviewer. Follow these steps:
++
++      1. If no PR number is provided in the ar</a></td>
++        <td class="num">60</td>
++      </tr>      <tr>
++        <td class="date">2026-01-12 <span class="time">17:40</span></td>
++        <td><a href="sessions/2026-01-12_0671d403.md">lass uns das linting in PR 656 und 658 fixen</a></td>
++        <td class="num">185</td>
++      </tr>
++  </tbody>
++</table>
++
++<script>
++function filterRows(query) {
++  const q = query.toLowerCase();
++  document.querySelectorAll('#sessions tr').forEach(tr => {
++    const text = tr.textContent.toLowerCase();
++    tr.style.display = text.includes(q) ? '' : 'none';
++  });
++}
++</script>
++
++</body>
++</html>
+\ No newline at end of file

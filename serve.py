@@ -302,6 +302,203 @@ def get_graph_data():
     return {"nodes": nodes, "links": links}
 
 
+def graph_query(query_type: str, params: dict) -> dict:
+    """Execute predefined graph queries against Neo4j.
+
+    Supported query_type values:
+      bridges       — concepts shared between two users (or all users)
+      neighbors     — all neighbors of a given node (by name + type)
+      path          — shortest path between two nodes
+      concepts      — all concepts, optionally filtered by user
+      decisions     — all decisions, optionally filtered by user
+      questions     — all open questions
+      person        — everything connected to a person
+      stats         — graph statistics
+    """
+    if not neo4j_driver:
+        return {"error": "Neo4j nicht verfügbar"}
+
+    with neo4j_driver.session() as s:
+        if query_type == "bridges":
+            # Concepts that connect two users (or show per-user counts)
+            user1 = params.get("user1", "anton")
+            user2 = params.get("user2", "timo")
+            result = s.run("""
+                MATCH (c:Concept)<-[:DISCUSSES]-(s:Session)
+                WHERE s.user_id IN [$user1, $user2]
+                WITH c.name AS concept,
+                     sum(CASE WHEN s.user_id = $user1 THEN 1 ELSE 0 END) AS count1,
+                     sum(CASE WHEN s.user_id = $user2 THEN 1 ELSE 0 END) AS count2
+                WHERE count1 > 0 AND count2 > 0
+                RETURN concept, count1, count2, count1 + count2 AS total
+                ORDER BY total DESC
+                LIMIT 20
+            """, user1=user1, user2=user2)
+            rows = [{"concept": r["concept"], user1: r["count1"], user2: r["count2"], "total": r["total"]}
+                    for r in result]
+            return {"query": "bridges", "users": [user1, user2], "results": rows}
+
+        elif query_type == "neighbors":
+            # All neighbors of a node
+            name = params.get("name", "")
+            node_type = params.get("type", "")
+            cypher = """
+                MATCH (n)-[r]-(m)
+                WHERE n.name = $name
+            """
+            if node_type:
+                cypher += f" AND n:{node_type}"
+            cypher += """
+                RETURN labels(m)[0] AS type, m.name AS name,
+                       type(r) AS rel, m.summary AS summary,
+                       m.user_id AS user_id, m.first_ts AS first_ts
+                ORDER BY type, name
+                LIMIT 50
+            """
+            result = s.run(cypher, name=name)
+            rows = []
+            for r in result:
+                row = {"type": r["type"], "name": r["name"], "rel": r["rel"]}
+                if r["summary"]:
+                    row["summary"] = r["summary"][:150]
+                if r["user_id"]:
+                    row["user_id"] = r["user_id"]
+                if r["first_ts"]:
+                    row["first_ts"] = r["first_ts"]
+                rows.append(row)
+            return {"query": "neighbors", "node": name, "results": rows}
+
+        elif query_type == "path":
+            # Shortest path between two named nodes
+            from_name = params.get("from", "")
+            to_name = params.get("to", "")
+            result = s.run("""
+                MATCH (a {name: $from_name}), (b {name: $to_name}),
+                      p = shortestPath((a)-[*..6]-(b))
+                RETURN [n IN nodes(p) | {type: labels(n)[0], name: n.name, summary: n.summary}] AS path,
+                       [r IN relationships(p) | type(r)] AS rels
+                LIMIT 1
+            """, from_name=from_name, to_name=to_name)
+            record = result.single()
+            if record:
+                path_nodes = []
+                for n in record["path"]:
+                    node = {"type": n["type"], "name": n["name"]}
+                    if n.get("summary"):
+                        node["summary"] = n["summary"][:150]
+                    path_nodes.append(node)
+                return {"query": "path", "from": from_name, "to": to_name,
+                        "path": path_nodes, "rels": record["rels"]}
+            return {"query": "path", "from": from_name, "to": to_name, "path": [], "rels": []}
+
+        elif query_type == "concepts":
+            user = params.get("user", "")
+            if user:
+                result = s.run("""
+                    MATCH (c:Concept)<-[:DISCUSSES]-(s:Session)
+                    WHERE s.user_id = $user
+                    RETURN c.name AS concept, count(s) AS sessions
+                    ORDER BY sessions DESC
+                    LIMIT 30
+                """, user=user)
+            else:
+                result = s.run("""
+                    MATCH (c:Concept)<-[:DISCUSSES]-(s:Session)
+                    RETURN c.name AS concept, count(s) AS sessions
+                    ORDER BY sessions DESC
+                    LIMIT 30
+                """)
+            rows = [{"concept": r["concept"], "sessions": r["sessions"]} for r in result]
+            return {"query": "concepts", "user": user or "all", "results": rows}
+
+        elif query_type == "decisions":
+            user = params.get("user", "")
+            if user:
+                result = s.run("""
+                    MATCH (d:Decision)<-[:LED_TO]-(s:Session)
+                    WHERE s.user_id = $user
+                    RETURN d.name AS decision, s.summary AS session_summary,
+                           s.first_ts AS date, s.user_id AS user_id
+                    ORDER BY s.first_ts DESC
+                    LIMIT 30
+                """, user=user)
+            else:
+                result = s.run("""
+                    MATCH (d:Decision)<-[:LED_TO]-(s:Session)
+                    RETURN d.name AS decision, s.summary AS session_summary,
+                           s.first_ts AS date, s.user_id AS user_id
+                    ORDER BY s.first_ts DESC
+                    LIMIT 30
+                """)
+            rows = [{"decision": r["decision"], "session": r["session_summary"][:100] if r["session_summary"] else "",
+                     "date": r["date"] or "", "user": r["user_id"] or ""} for r in result]
+            return {"query": "decisions", "user": user or "all", "results": rows}
+
+        elif query_type == "questions":
+            result = s.run("""
+                MATCH (q:Question)<-[:RAISED]-(s:Session)
+                RETURN q.name AS question, s.first_ts AS date, s.user_id AS user_id
+                ORDER BY s.first_ts DESC
+                LIMIT 30
+            """)
+            rows = [{"question": r["question"], "date": r["date"] or "", "user": r["user_id"] or ""} for r in result]
+            return {"query": "questions", "results": rows}
+
+        elif query_type == "person":
+            name = params.get("name", "")
+            # Sessions BY this person
+            result_by = s.run("""
+                MATCH (p:Person {name: $name})<-[:BY]-(s:Session)
+                RETURN s.summary AS summary, s.first_ts AS date, s.id AS session_id
+                ORDER BY s.first_ts DESC
+                LIMIT 10
+            """, name=name)
+            sessions = [{"summary": r["summary"][:150] if r["summary"] else "", "date": r["date"] or "",
+                         "session_id": r["session_id"]} for r in result_by]
+
+            # Sessions that MENTION this person
+            result_mentions = s.run("""
+                MATCH (p:Person {name: $name})<-[:MENTIONS]-(s:Session)
+                RETURN s.summary AS summary, s.first_ts AS date, s.user_id AS by_user, s.id AS session_id
+                ORDER BY s.first_ts DESC
+                LIMIT 10
+            """, name=name)
+            mentions = [{"summary": r["summary"][:150] if r["summary"] else "", "date": r["date"] or "",
+                         "by": r["by_user"] or "", "session_id": r["session_id"]} for r in result_mentions]
+
+            # Concepts connected via sessions
+            result_concepts = s.run("""
+                MATCH (p:Person {name: $name})<-[:BY]-(s:Session)-[:DISCUSSES]->(c:Concept)
+                RETURN c.name AS concept, count(s) AS sessions
+                ORDER BY sessions DESC
+                LIMIT 15
+            """, name=name)
+            concepts = [{"concept": r["concept"], "sessions": r["sessions"]} for r in result_concepts]
+
+            return {"query": "person", "name": name,
+                    "sessions": sessions, "mentioned_in": mentions, "concepts": concepts}
+
+        elif query_type == "stats":
+            result = s.run("""
+                MATCH (n) RETURN labels(n)[0] AS type, count(n) AS count
+                ORDER BY count DESC
+            """)
+            node_stats = {r["type"]: r["count"] for r in result}
+
+            result = s.run("""
+                MATCH ()-[r]->() RETURN type(r) AS type, count(r) AS count
+                ORDER BY count DESC
+            """)
+            edge_stats = {r["type"]: r["count"] for r in result}
+
+            return {"query": "stats", "nodes": node_stats, "edges": edge_stats}
+
+        else:
+            return {"error": f"Unbekannter query_type: {query_type}",
+                    "supported": ["bridges", "neighbors", "path", "concepts", "decisions",
+                                  "questions", "person", "stats"]}
+
+
 def init_chroma(force_rebuild=False):
     """Connect to Chroma and get/create collection."""
     global chroma_collection
@@ -2141,6 +2338,13 @@ class ArchiveHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/graph":
             data = get_graph_data()
+            self.respond(200, json.dumps(data, ensure_ascii=False), content_type="application/json; charset=utf-8")
+
+        elif path == "/api/graph/query":
+            qt = params.get("type", [""])[0]
+            # Pass all other params to graph_query
+            qp = {k: v[0] for k, v in params.items() if k != "type" and k != "key"}
+            data = graph_query(qt, qp)
             self.respond(200, json.dumps(data, ensure_ascii=False), content_type="application/json; charset=utf-8")
 
         elif path.startswith("/session/"):
