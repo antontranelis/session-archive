@@ -72,7 +72,7 @@ neo4j_driver = None
 
 
 def init_neo4j():
-    """Connect to Neo4j and create constraints/indexes."""
+    """Connect to Neo4j (schema v2 — knowledge graph, no session sync)."""
     global neo4j_driver
     if not NEO4J_URI:
         print("  Neo4j: Kein NEO4J_URI konfiguriert")
@@ -81,19 +81,29 @@ def init_neo4j():
         from neo4j import GraphDatabase
         neo4j_driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
         neo4j_driver.verify_connectivity()
-        # Create constraints + indexes
+        # Constraints for knowledge graph schema v2
         with neo4j_driver.session() as session:
-            session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (s:Session) REQUIRE s.id IS UNIQUE")
-            session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (t:Tag) REQUIRE t.name IS UNIQUE")
-            session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (p:Person) REQUIRE p.name IS UNIQUE")
-        print(f"  Neo4j: Verbunden mit {NEO4J_URI}")
+            for label in ["Person", "Projekt", "Thema", "Organisation"]:
+                try:
+                    session.run(f"CREATE CONSTRAINT IF NOT EXISTS FOR (n:{label}) REQUIRE n.name IS UNIQUE")
+                except Exception:
+                    pass
+        # Count nodes for info
+        with neo4j_driver.session() as session:
+            r = session.run("MATCH (n) RETURN count(n) as c").single()
+            count = r["c"] if r else 0
+        print(f"  Neo4j: Verbunden mit {NEO4J_URI} ({count} Knoten)")
     except Exception as e:
         print(f"  Neo4j nicht verfügbar: {e}")
         neo4j_driver = None
 
 
 def sync_to_neo4j(db):
-    """Sync sessions, tags, persons from SQLite to Neo4j graph."""
+    """DEACTIVATED: Knowledge graph v2 is populated via neo4j_import.py script.
+    Sessions are no longer nodes in the graph — they are source references (properties)."""
+    return  # Disabled: graph is managed externally via import script
+
+    # --- OLD CODE (v1 schema with Session nodes) ---
     if not neo4j_driver:
         return
 
@@ -238,80 +248,97 @@ def sync_to_neo4j(db):
 
 
 def get_graph_data():
-    """Get nodes + edges from Neo4j for D3 visualization."""
+    """Get nodes + edges from Neo4j for D3 visualization (new schema v2)."""
     if not neo4j_driver:
         return {"nodes": [], "links": []}
+
+    # New node types in the knowledge graph
+    KNOWN_LABELS = {
+        "Person", "Projekt", "Thema", "Organisation",
+        "Aufgabe", "Erkenntnis", "Entscheidung", "Meilenstein",
+        "Herausforderung", "Spannung", "Artefakt"
+    }
 
     nodes = []
     links = []
 
     with neo4j_driver.session() as session:
-        # Get all nodes
         result = session.run("""
             MATCH (n)
-            WHERE n:Session OR n:Tag OR n:Person OR n:Concept OR n:Decision OR n:Question
+            WHERE any(l IN labels(n) WHERE l IN [
+                'Person','Projekt','Thema','Organisation',
+                'Aufgabe','Erkenntnis','Entscheidung','Meilenstein',
+                'Herausforderung','Spannung','Artefakt'
+            ])
             RETURN id(n) as neo_id, labels(n) as labels, properties(n) as props
         """)
-        node_map = {}  # neo_id → index
+        node_map = {}
         for record in result:
             neo_id = record["neo_id"]
-            label = record["labels"][0]
+            labels = record["labels"]
+            label = next((l for l in labels if l in KNOWN_LABELS), labels[0])
             props = dict(record["props"])
             idx = len(nodes)
             node_map[neo_id] = idx
 
-            node = {"id": idx, "neo_id": neo_id, "type": label}
-            if label == "Session":
-                node["name"] = props.get("summary", props.get("title", "?"))[:80]
-                node["session_id"] = props.get("id", "")
-                node["user_id"] = props.get("user_id", "")
-                node["msg_count"] = props.get("msg_count", 0)
-                node["first_ts"] = props.get("first_ts", "")
-                node["last_ts"] = props.get("last_ts", "")
-            elif label == "Tag":
-                node["name"] = props.get("name", "?")
-            elif label == "Person":
-                node["name"] = props.get("name", "?")
-            elif label == "Concept":
-                node["name"] = props.get("name", "?")
-            elif label == "Decision":
-                node["name"] = props.get("name", "?")
-            elif label == "Question":
-                node["name"] = props.get("name", "?")
+            node = {
+                "id": idx,
+                "neo_id": neo_id,
+                "type": label,
+                "name": props.get("name", "?"),
+            }
+            # Optional fields for detail panel
+            if props.get("beschreibung"):
+                node["beschreibung"] = props["beschreibung"]
+            if props.get("status"):
+                node["status"] = props["status"]
+            if props.get("projekt"):
+                node["projekt"] = props["projekt"]
+            if props.get("sessions"):
+                node["sessions"] = props["sessions"]
+            if props.get("msg_refs"):
+                # msg_refs stored as JSON string in Neo4j
+                mr = props["msg_refs"]
+                if isinstance(mr, str):
+                    try:
+                        node["msg_refs"] = json.loads(mr)
+                    except Exception:
+                        pass
+                else:
+                    node["msg_refs"] = mr
+            if props.get("code_ref"):
+                node["code_ref"] = props["code_ref"]
+            if props.get("verantwortlich"):
+                node["verantwortlich"] = props["verantwortlich"]
             nodes.append(node)
 
-        # Get all relationships
         result = session.run("""
             MATCH (a)-[r]->(b)
-            RETURN id(a) as source, id(b) as target, type(r) as rel_type, properties(r) as props
+            RETURN id(a) as source, id(b) as target, type(r) as rel_type
         """)
         for record in result:
             src = node_map.get(record["source"])
             tgt = node_map.get(record["target"])
             if src is not None and tgt is not None:
-                link = {
+                links.append({
                     "source": src,
                     "target": tgt,
                     "type": record["rel_type"],
-                }
-                props = dict(record["props"])
-                if "distance" in props:
-                    link["distance"] = props["distance"]
-                links.append(link)
+                })
 
     return {"nodes": nodes, "links": links}
 
 
 def graph_query(query_type: str, params: dict) -> dict:
-    """Execute predefined graph queries against Neo4j.
+    """Execute predefined graph queries against Neo4j (schema v2).
 
     Supported query_type values:
-      bridges       — concepts shared between two users (or all users)
+      bridges       — themes/concepts shared between anton and timo (via sessions property)
       neighbors     — all neighbors of a given node (by name + type)
       path          — shortest path between two nodes
-      concepts      — all concepts, optionally filtered by user
-      decisions     — all decisions, optionally filtered by user
-      questions     — all open questions
+      concepts      — all Thema nodes with session counts
+      decisions     — all Entscheidung nodes
+      questions     — all Herausforderung/Spannung nodes (open issues)
       person        — everything connected to a person
       stats         — graph statistics
     """
@@ -320,163 +347,158 @@ def graph_query(query_type: str, params: dict) -> dict:
 
     with neo4j_driver.session() as s:
         if query_type == "bridges":
-            # Concepts that connect two users (or show per-user counts)
-            user1 = params.get("user1", "anton")
-            user2 = params.get("user2", "timo")
+            # Themen/Konzepte die Anton und Timo verbinden
+            # In new schema: sessions property on Thema nodes contains session IDs
+            # We detect sessions by matching prefix patterns or use HAT_THEMA edges
             result = s.run("""
-                MATCH (c:Concept)<-[:DISCUSSES]-(s:Session)
-                WHERE s.user_id IN [$user1, $user2]
-                WITH c.name AS concept,
-                     sum(CASE WHEN s.user_id = $user1 THEN 1 ELSE 0 END) AS count1,
-                     sum(CASE WHEN s.user_id = $user2 THEN 1 ELSE 0 END) AS count2
-                WHERE count1 > 0 AND count2 > 0
-                RETURN concept, count1, count2, count1 + count2 AS total
-                ORDER BY total DESC
-                LIMIT 20
-            """, user1=user1, user2=user2)
-            rows = [{"concept": r["concept"], user1: r["count1"], user2: r["count2"], "total": r["total"]}
+                MATCH (t:Thema)
+                WHERE t.sessions IS NOT NULL AND size(t.sessions) >= 2
+                RETURN t.name AS thema, t.sessions AS sessions, size(t.sessions) AS count
+                ORDER BY count DESC
+                LIMIT 30
+            """)
+            rows = [{"thema": r["thema"], "sessions": r["sessions"], "count": r["count"]}
                     for r in result]
-            return {"query": "bridges", "users": [user1, user2], "results": rows}
+            return {"query": "bridges", "results": rows}
 
         elif query_type == "neighbors":
-            # All neighbors of a node
             name = params.get("name", "")
             node_type = params.get("type", "")
-            cypher = """
-                MATCH (n)-[r]-(m)
-                WHERE n.name = $name
-            """
             if node_type:
-                cypher += f" AND n:{node_type}"
-            cypher += """
-                RETURN labels(m)[0] AS type, m.name AS name,
-                       type(r) AS rel, m.summary AS summary,
-                       m.user_id AS user_id, m.first_ts AS first_ts
-                ORDER BY type, name
-                LIMIT 50
-            """
+                cypher = f"""
+                    MATCH (n:{node_type} {{name: $name}})-[r]-(m)
+                    RETURN labels(m)[0] AS type, m.name AS name,
+                           type(r) AS rel, m.beschreibung AS beschreibung,
+                           m.status AS status
+                    ORDER BY type, name
+                    LIMIT 50
+                """
+            else:
+                cypher = """
+                    MATCH (n {name: $name})-[r]-(m)
+                    RETURN labels(m)[0] AS type, m.name AS name,
+                           type(r) AS rel, m.beschreibung AS beschreibung,
+                           m.status AS status
+                    ORDER BY type, name
+                    LIMIT 50
+                """
             result = s.run(cypher, name=name)
             rows = []
             for r in result:
                 row = {"type": r["type"], "name": r["name"], "rel": r["rel"]}
-                if r["summary"]:
-                    row["summary"] = r["summary"][:150]
-                if r["user_id"]:
-                    row["user_id"] = r["user_id"]
-                if r["first_ts"]:
-                    row["first_ts"] = r["first_ts"]
+                if r["beschreibung"]:
+                    row["beschreibung"] = r["beschreibung"][:150]
+                if r["status"]:
+                    row["status"] = r["status"]
                 rows.append(row)
             return {"query": "neighbors", "node": name, "results": rows}
 
         elif query_type == "path":
-            # Shortest path between two named nodes
             from_name = params.get("from", "")
             to_name = params.get("to", "")
             result = s.run("""
                 MATCH (a {name: $from_name}), (b {name: $to_name}),
                       p = shortestPath((a)-[*..6]-(b))
-                RETURN [n IN nodes(p) | {type: labels(n)[0], name: n.name, summary: n.summary}] AS path,
+                RETURN [n IN nodes(p) | {type: labels(n)[0], name: n.name}] AS path,
                        [r IN relationships(p) | type(r)] AS rels
                 LIMIT 1
             """, from_name=from_name, to_name=to_name)
             record = result.single()
             if record:
-                path_nodes = []
-                for n in record["path"]:
-                    node = {"type": n["type"], "name": n["name"]}
-                    if n.get("summary"):
-                        node["summary"] = n["summary"][:150]
-                    path_nodes.append(node)
                 return {"query": "path", "from": from_name, "to": to_name,
-                        "path": path_nodes, "rels": record["rels"]}
+                        "path": record["path"], "rels": record["rels"]}
             return {"query": "path", "from": from_name, "to": to_name, "path": [], "rels": []}
 
         elif query_type == "concepts":
-            user = params.get("user", "")
-            if user:
-                result = s.run("""
-                    MATCH (c:Concept)<-[:DISCUSSES]-(s:Session)
-                    WHERE s.user_id = $user
-                    RETURN c.name AS concept, count(s) AS sessions
-                    ORDER BY sessions DESC
-                    LIMIT 30
-                """, user=user)
-            else:
-                result = s.run("""
-                    MATCH (c:Concept)<-[:DISCUSSES]-(s:Session)
-                    RETURN c.name AS concept, count(s) AS sessions
-                    ORDER BY sessions DESC
-                    LIMIT 30
-                """)
-            rows = [{"concept": r["concept"], "sessions": r["sessions"]} for r in result]
-            return {"query": "concepts", "user": user or "all", "results": rows}
+            # Thema nodes with session count
+            result = s.run("""
+                MATCH (t:Thema)
+                RETURN t.name AS thema,
+                       size(coalesce(t.sessions, [])) AS session_count
+                ORDER BY session_count DESC
+                LIMIT 40
+            """)
+            rows = [{"thema": r["thema"], "sessions": r["session_count"]} for r in result]
+            return {"query": "concepts", "results": rows}
 
         elif query_type == "decisions":
-            user = params.get("user", "")
-            if user:
-                result = s.run("""
-                    MATCH (d:Decision)<-[:LED_TO]-(s:Session)
-                    WHERE s.user_id = $user
-                    RETURN d.name AS decision, s.summary AS session_summary,
-                           s.first_ts AS date, s.user_id AS user_id
-                    ORDER BY s.first_ts DESC
-                    LIMIT 30
-                """, user=user)
-            else:
-                result = s.run("""
-                    MATCH (d:Decision)<-[:LED_TO]-(s:Session)
-                    RETURN d.name AS decision, s.summary AS session_summary,
-                           s.first_ts AS date, s.user_id AS user_id
-                    ORDER BY s.first_ts DESC
-                    LIMIT 30
-                """)
-            rows = [{"decision": r["decision"], "session": r["session_summary"][:100] if r["session_summary"] else "",
-                     "date": r["date"] or "", "user": r["user_id"] or ""} for r in result]
-            return {"query": "decisions", "user": user or "all", "results": rows}
+            # Entscheidung nodes
+            result = s.run("""
+                MATCH (d:Entscheidung)
+                RETURN d.name AS name, d.beschreibung AS beschreibung,
+                       d.projekt AS projekt, d.status AS status,
+                       size(coalesce(d.sessions, [])) AS session_count
+                ORDER BY session_count DESC
+                LIMIT 40
+            """)
+            rows = [{
+                "name": r["name"],
+                "beschreibung": (r["beschreibung"] or "")[:120],
+                "projekt": r["projekt"] or "",
+                "status": r["status"] or "",
+                "sessions": r["session_count"],
+            } for r in result]
+            return {"query": "decisions", "results": rows}
 
         elif query_type == "questions":
+            # Herausforderungen + Spannungen (open issues)
             result = s.run("""
-                MATCH (q:Question)<-[:RAISED]-(s:Session)
-                RETURN q.name AS question, s.first_ts AS date, s.user_id AS user_id
-                ORDER BY s.first_ts DESC
-                LIMIT 30
+                MATCH (n)
+                WHERE (n:Herausforderung OR n:Spannung) AND n.status IN ['offen', null, '']
+                RETURN labels(n)[0] AS type, n.name AS name,
+                       n.projekt AS projekt,
+                       size(coalesce(n.sessions, [])) AS session_count
+                ORDER BY session_count DESC
+                LIMIT 40
             """)
-            rows = [{"question": r["question"], "date": r["date"] or "", "user": r["user_id"] or ""} for r in result]
+            rows = [{
+                "type": r["type"],
+                "name": r["name"],
+                "projekt": r["projekt"] or "",
+                "sessions": r["session_count"],
+            } for r in result]
             return {"query": "questions", "results": rows}
 
         elif query_type == "person":
             name = params.get("name", "")
-            # Sessions BY this person
-            result_by = s.run("""
-                MATCH (p:Person {name: $name})<-[:BY]-(s:Session)
-                RETURN s.summary AS summary, s.first_ts AS date, s.id AS session_id
-                ORDER BY s.first_ts DESC
-                LIMIT 10
+            # Items this person is responsible for (VERANTWORTLICH edge)
+            result_verant = s.run("""
+                MATCH (p:Person {name: $name})<-[:VERANTWORTLICH]-(n)
+                RETURN labels(n)[0] AS type, n.name AS name,
+                       n.beschreibung AS beschreibung, n.status AS status,
+                       n.projekt AS projekt
+                ORDER BY type, name
+                LIMIT 20
             """, name=name)
-            sessions = [{"summary": r["summary"][:150] if r["summary"] else "", "date": r["date"] or "",
-                         "session_id": r["session_id"]} for r in result_by]
+            responsible = [{
+                "type": r["type"], "name": r["name"],
+                "beschreibung": (r["beschreibung"] or "")[:100],
+                "status": r["status"] or "",
+                "projekt": r["projekt"] or "",
+            } for r in result_verant]
 
-            # Sessions that MENTION this person
-            result_mentions = s.run("""
-                MATCH (p:Person {name: $name})<-[:MENTIONS]-(s:Session)
-                RETURN s.summary AS summary, s.first_ts AS date, s.user_id AS by_user, s.id AS session_id
-                ORDER BY s.first_ts DESC
-                LIMIT 10
+            # Projects this person works on (ARBEITET_AN edge)
+            result_proj = s.run("""
+                MATCH (p:Person {name: $name})-[:ARBEITET_AN]->(proj:Projekt)
+                RETURN proj.name AS projekt
+                ORDER BY projekt
             """, name=name)
-            mentions = [{"summary": r["summary"][:150] if r["summary"] else "", "date": r["date"] or "",
-                         "by": r["by_user"] or "", "session_id": r["session_id"]} for r in result_mentions]
+            projects = [r["projekt"] for r in result_proj]
 
-            # Concepts connected via sessions
-            result_concepts = s.run("""
-                MATCH (p:Person {name: $name})<-[:BY]-(s:Session)-[:DISCUSSES]->(c:Concept)
-                RETURN c.name AS concept, count(s) AS sessions
-                ORDER BY sessions DESC
-                LIMIT 15
+            # Person's beschreibung
+            result_info = s.run("""
+                MATCH (p:Person {name: $name})
+                RETURN p.beschreibung AS beschreibung, p.rolle AS rolle
             """, name=name)
-            concepts = [{"concept": r["concept"], "sessions": r["sessions"]} for r in result_concepts]
+            info = result_info.single()
+            beschreibung = info["beschreibung"] if info else ""
+            rolle = info["rolle"] if info else ""
 
             return {"query": "person", "name": name,
-                    "sessions": sessions, "mentioned_in": mentions, "concepts": concepts}
+                    "beschreibung": beschreibung or "",
+                    "rolle": rolle or "",
+                    "responsible_for": responsible,
+                    "projects": projects}
 
         elif query_type == "stats":
             result = s.run("""
@@ -1476,7 +1498,7 @@ def _user_badge(user_id):
 
 
 def render_graph_page():
-    """Render the D3.js force-directed graph visualization page."""
+    """Render the D3.js force-directed graph visualization page (schema v2)."""
     return f"""<!DOCTYPE html>
 <html lang="de"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1493,10 +1515,9 @@ def render_graph_page():
   #graph {{ width: 100vw; height: 100vh; }}
   svg {{ width: 100%; height: 100%; }}
 
-  /* Controls */
   .controls {{
     position: fixed; top: 1rem; left: 1rem; z-index: 10;
-    display: flex; flex-direction: column; gap: 0.4rem;
+    display: flex; flex-direction: column; gap: 0.4rem; max-width: 220px;
   }}
   .controls a, .controls button {{
     background: var(--bg-raised); border: 1px solid var(--border);
@@ -1509,9 +1530,8 @@ def render_graph_page():
   .filter-row {{ display: flex; gap: 0.25rem; flex-wrap: wrap; }}
   .filter-label {{ font-size: 0.6rem; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0.2rem; }}
 
-  /* Detail Panel */
   .detail-panel {{
-    position: fixed; top: 0; right: 0; width: 360px; height: 100vh;
+    position: fixed; top: 0; right: 0; width: 380px; height: 100vh;
     background: var(--bg-raised); border-left: 1px solid var(--border);
     z-index: 20; overflow-y: auto; display: none; padding: 1.2rem;
   }}
@@ -1528,30 +1548,48 @@ def render_graph_page():
     margin-bottom: 0.5rem;
   }}
   .detail-name {{
-    font-size: 1rem; font-weight: 600; color: var(--fg-white);
-    line-height: 1.4; margin-bottom: 0.8rem;
+    font-size: 0.95rem; font-weight: 600; color: var(--fg-white);
+    line-height: 1.4; margin-bottom: 0.6rem;
   }}
-  .detail-meta {{ font-size: 0.75rem; color: var(--fg-dim); margin-bottom: 0.3rem; }}
+  .detail-desc {{
+    font-size: 0.78rem; color: var(--fg); line-height: 1.5;
+    margin-bottom: 0.5rem; padding: 0.5rem 0.6rem;
+    background: rgba(255,255,255,0.03); border-radius: 4px;
+  }}
+  .detail-meta {{ font-size: 0.72rem; color: var(--fg-dim); margin-bottom: 0.25rem; }}
+  .detail-meta span {{ color: var(--fg); }}
   .detail-section {{
-    margin-top: 1rem; padding-top: 0.8rem;
+    margin-top: 0.9rem; padding-top: 0.7rem;
     border-top: 1px solid var(--border);
   }}
   .detail-section h3 {{
-    font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em;
-    color: var(--fg-dim); margin-bottom: 0.5rem;
+    font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--fg-dim); margin-bottom: 0.4rem;
   }}
   .detail-link {{
-    display: block; padding: 0.35rem 0.5rem; margin: 0.15rem 0;
-    border-radius: 4px; font-size: 0.75rem; color: var(--fg);
-    text-decoration: none; cursor: pointer;
+    display: block; padding: 0.3rem 0.5rem; margin: 0.1rem 0;
+    border-radius: 4px; font-size: 0.73rem; color: var(--fg);
+    text-decoration: none; cursor: pointer; line-height: 1.4;
   }}
-  .detail-link:hover {{ background: var(--bg); color: var(--fg-white); }}
-  .detail-link .dl-dot {{
-    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-    margin-right: 0.4rem; vertical-align: middle;
+  .detail-link:hover {{ background: var(--bg); color: var(--fg-white); text-decoration: none; }}
+  .dl-dot {{
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    margin-right: 0.4rem; vertical-align: middle; flex-shrink: 0;
+  }}
+  .msg-link {{
+    display: inline-block; font-size: 0.65rem; font-family: var(--mono);
+    color: var(--accent); opacity: 0.7; margin: 0.1rem 0.15rem 0.1rem 0;
+    padding: 0.05rem 0.3rem; border: 1px solid rgba(0,122,204,0.3); border-radius: 3px;
+    text-decoration: none; white-space: nowrap;
+  }}
+  .msg-link:hover {{ opacity: 1; border-color: var(--accent); }}
+  .code-ref {{
+    font-size: 0.65rem; font-family: var(--mono); color: #ce9178;
+    background: rgba(206,145,120,0.1); padding: 0.1rem 0.4rem;
+    border-radius: 3px; display: inline-block; margin-top: 0.3rem;
+    word-break: break-all;
   }}
 
-  /* Tooltip */
   .tooltip {{
     position: fixed; pointer-events: none; z-index: 100;
     background: var(--bg-raised); border: 1px solid var(--border);
@@ -1564,13 +1602,12 @@ def render_graph_page():
   .tooltip .tt-detail {{ color: var(--fg-dim); font-size: 0.7rem; }}
   .tooltip .tt-hint {{ color: var(--accent); font-size: 0.65rem; margin-top: 0.3rem; }}
 
-  /* Legend */
   .legend {{
     position: fixed; bottom: 1rem; left: 1rem; z-index: 10;
     background: var(--bg-raised); border: 1px solid var(--border);
-    border-radius: 6px; padding: 0.5rem 0.7rem; font-size: 0.65rem;
+    border-radius: 6px; padding: 0.5rem 0.7rem; font-size: 0.62rem;
   }}
-  .legend-item {{ display: flex; align-items: center; gap: 0.35rem; margin: 0.15rem 0; }}
+  .legend-item {{ display: flex; align-items: center; gap: 0.35rem; margin: 0.12rem 0; }}
   .legend-dot {{ width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }}
 
   .loading {{
@@ -1585,42 +1622,60 @@ def render_graph_page():
   <button class="detail-close" id="detail-close">✕</button>
   <div id="detail-content"></div>
 </div>
-<div class="loading" id="loading">Graph wird geladen...</div>
+<div class="loading" id="loading">Wissensgraph wird geladen...</div>
 
 <div class="controls">
   <a href="{BASE_PATH}/">← Archiv</a>
-  <div class="filter-label">User</div>
+  <div class="filter-label">Knotentyp</div>
   <div class="filter-row">
-    <button class="active" data-filter="all">Alle</button>
-    <button data-filter="anton">Anton</button>
-    <button data-filter="timo">Timo</button>
+    <button class="active" data-type="all">Alle</button>
+    <button data-type="Person">Personen</button>
+    <button data-type="Projekt">Projekte</button>
+    <button data-type="Thema">Themen</button>
+    <button data-type="Organisation">Orgs</button>
   </div>
-  <div class="filter-label">Zeige</div>
   <div class="filter-row">
-    <button class="active" data-edge="all">Alles</button>
-    <button data-edge="TAGGED">Tags</button>
-    <button data-edge="SIMILAR">Ähnlich</button>
-    <button data-edge="DISCUSSES">Konzepte</button>
-    <button data-edge="LED_TO">Entscheid.</button>
-    <button data-edge="RAISED">Fragen</button>
-    <button data-edge="MENTIONS">Personen</button>
+    <button data-type="Aufgabe">Aufgaben</button>
+    <button data-type="Erkenntnis">Erkenntn.</button>
+    <button data-type="Entscheidung">Entscheid.</button>
+    <button data-type="Meilenstein">Meilens.</button>
+  </div>
+  <div class="filter-row">
+    <button data-type="Herausforderung">Herausf.</button>
+    <button data-type="Spannung">Spannung.</button>
+    <button data-type="Artefakt">Artefakte</button>
+  </div>
+  <div class="filter-label">Kanten</div>
+  <div class="filter-row">
+    <button class="active" data-edge="all">Alle</button>
+    <button data-edge="IN_PROJEKT">Projekt</button>
+    <button data-edge="GEHOERT_ZU">Gehört zu</button>
+    <button data-edge="BETRIFFT">Betrifft</button>
+    <button data-edge="VERANTWORTLICH">Verantw.</button>
+    <button data-edge="VON">Von</button>
+    <button data-edge="HAT_THEMA">Thema</button>
   </div>
 </div>
 
 <div class="legend">
-  <div class="legend-item"><div class="legend-dot" style="background:#007acc"></div> Session (Anton)</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#e5a33d"></div> Session (Timo)</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#c586c0"></div> Tag</div>
   <div class="legend-item"><div class="legend-dot" style="background:#6a9955"></div> Person</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#569cd6"></div> Konzept</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#dcdcaa"></div> Entscheidung</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#f44747"></div> Offene Frage</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#007acc"></div> Projekt</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#569cd6"></div> Thema</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#c586c0"></div> Organisation</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#dcdcaa"></div> Aufgabe</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#4ec9b0"></div> Erkenntnis</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ce9178"></div> Entscheidung</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#9cdcfe"></div> Meilenstein</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f44747"></div> Herausforderung</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ff8c00"></div> Spannung</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#b5cea8"></div> Artefakt</div>
 </div>
 
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 (function() {{
   const BASE = "{BASE_PATH}";
+  const ARCHIVE_BASE = BASE + "/archive";
   const tooltip = document.getElementById('tooltip');
   const loading = document.getElementById('loading');
   const detailPanel = document.getElementById('detail-panel');
@@ -1632,26 +1687,43 @@ def render_graph_page():
   }});
 
   const typeColors = {{
-    Session: '#007acc', Tag: '#c586c0', Person: '#6a9955',
-    Concept: '#569cd6', Decision: '#dcdcaa', Question: '#f44747',
+    Person: '#6a9955', Projekt: '#007acc', Thema: '#569cd6',
+    Organisation: '#c586c0', Aufgabe: '#dcdcaa', Erkenntnis: '#4ec9b0',
+    Entscheidung: '#ce9178', Meilenstein: '#9cdcfe',
+    Herausforderung: '#f44747', Spannung: '#ff8c00', Artefakt: '#b5cea8',
   }};
   const typeLabels = {{
-    Session: 'Session', Tag: 'Tag', Person: 'Person',
-    Concept: 'Konzept', Decision: 'Entscheidung', Question: 'Offene Frage',
+    Person: 'Person', Projekt: 'Projekt', Thema: 'Thema',
+    Organisation: 'Organisation', Aufgabe: 'Aufgabe', Erkenntnis: 'Erkenntnis',
+    Entscheidung: 'Entscheidung', Meilenstein: 'Meilenstein',
+    Herausforderung: 'Herausforderung', Spannung: 'Spannung', Artefakt: 'Artefakt',
+  }};
+  const edgeColors = {{
+    IN_PROJEKT: '#007acc44', GEHOERT_ZU: '#569cd644', BETRIFFT: '#c586c044',
+    VERANTWORTLICH: '#6a995544', VON: '#ce917844',
+    ARBEITET_AN: '#6a995522', HAT_THEMA: '#569cd622',
   }};
   const edgeLabels = {{
-    TAGGED: 'getaggt', BY: 'von', FOLLOWS: 'danach', SIMILAR: 'ähnlich',
-    DISCUSSES: 'diskutiert', LED_TO: 'entschieden', RAISED: 'aufgeworfen', MENTIONS: 'erwähnt',
+    IN_PROJEKT: 'in Projekt', GEHOERT_ZU: 'gehört zu', BETRIFFT: 'betrifft',
+    VERANTWORTLICH: 'verantwortlich', VON: 'von', ARBEITET_AN: 'arbeitet an',
+    HAT_THEMA: 'hat Thema',
   }};
-  const userColors = {{ anton: '#007acc', timo: '#e5a33d' }};
-  const edgeColors = {{
-    TAGGED: '#c586c066', BY: '#6a995566', FOLLOWS: '#3c3c3c44',
-    SIMILAR: '#ce917866', DISCUSSES: '#569cd666', LED_TO: '#dcdcaa66',
-    RAISED: '#f4474766', MENTIONS: '#6a995544',
+
+  // Node sizes by type
+  const typeSizes = {{
+    Person: 14, Projekt: 18, Thema: 12, Organisation: 11,
+    Aufgabe: 5, Erkenntnis: 6, Entscheidung: 7, Meilenstein: 7,
+    Herausforderung: 6, Spannung: 6, Artefakt: 5,
+  }};
+  // Charge (repulsion) by type
+  const typeCharge = {{
+    Person: -400, Projekt: -500, Thema: -300, Organisation: -250,
+    Aufgabe: -80, Erkenntnis: -100, Entscheidung: -120, Meilenstein: -100,
+    Herausforderung: -90, Spannung: -90, Artefakt: -70,
   }};
 
   let graphData = null;
-  let userFilter = 'all';
+  let typeFilter = 'all';
   let edgeFilter = 'all';
   let highlightedNode = null;
   let currentNodes = [];
@@ -1672,15 +1744,15 @@ def render_graph_page():
     let nodes = graphData.nodes;
     let links = graphData.links;
 
-    if (userFilter !== 'all') {{
-      const sessionIds = new Set();
-      nodes.forEach(n => {{ if (n.type === 'Session' && n.user_id === userFilter) sessionIds.add(n.id); }});
-      const connectedIds = new Set(sessionIds);
+    if (typeFilter !== 'all') {{
+      // When filtering by type, show those nodes + their direct neighbors
+      const primaryIds = new Set(nodes.filter(n => n.type === typeFilter).map(n => n.id));
+      const connectedIds = new Set(primaryIds);
       links.forEach(l => {{
         const src = typeof l.source === 'object' ? l.source.id : l.source;
         const tgt = typeof l.target === 'object' ? l.target.id : l.target;
-        if (sessionIds.has(src)) connectedIds.add(tgt);
-        if (sessionIds.has(tgt)) connectedIds.add(src);
+        if (primaryIds.has(src)) connectedIds.add(tgt);
+        if (primaryIds.has(tgt)) connectedIds.add(src);
       }});
       nodes = nodes.filter(n => connectedIds.has(n.id));
       const nodeIds = new Set(nodes.map(n => n.id));
@@ -1721,23 +1793,74 @@ def render_graph_page():
     return neighbors;
   }}
 
+  function buildMsgRefLinks(msgRefs) {{
+    // msgRefs: {{ "session_id": [idx1, idx2, ...], ... }}
+    if (!msgRefs || typeof msgRefs !== 'object') return '';
+    let html = '<div style="margin-top:0.3rem;display:flex;flex-wrap:wrap;gap:2px;">';
+    for (const [sid, indices] of Object.entries(msgRefs)) {{
+      const shortId = sid.substring(0, 8);
+      if (Array.isArray(indices) && indices.length) {{
+        indices.forEach(idx => {{
+          html += `<a class="msg-link" href="${{BASE}}/session/${{sid}}#msg-${{idx}}" target="_blank" title="Session ${{shortId}}, Nachricht ${{idx + 1}}">${{shortId}}:${{idx + 1}}</a>`;
+        }});
+      }} else {{
+        html += `<a class="msg-link" href="${{BASE}}/session/${{sid}}" target="_blank" title="Session ${{shortId}}">${{shortId}}</a>`;
+      }}
+    }}
+    html += '</div>';
+    return html;
+  }}
+
   function showDetail(d) {{
     highlightedNode = d.id;
     updateHighlight();
 
-    const color = d.type === 'Session' ? (userColors[d.user_id] || typeColors.Session) : typeColors[d.type];
+    const color = typeColors[d.type] || '#666';
     let html = `<div class="detail-type" style="background:${{color}}33;color:${{color}}">${{typeLabels[d.type] || d.type}}</div>`;
     html += `<div class="detail-name">${{escHtml(d.name)}}</div>`;
 
-    if (d.type === 'Session') {{
-      if (d.user_id) html += `<div class="detail-meta">User: ${{d.user_id}}</div>`;
-      if (d.msg_count) html += `<div class="detail-meta">${{d.msg_count}} Nachrichten</div>`;
-      if (d.first_ts) html += `<div class="detail-meta">Erstellt: ${{d.first_ts.substring(0, 10)}}</div>`;
-      if (d.last_ts) html += `<div class="detail-meta">Zuletzt: ${{d.last_ts.substring(0, 10)}}</div>`;
-      html += `<div style="margin-top:0.6rem"><a href="${{BASE}}/session/${{d.session_id}}" target="_blank" style="color:var(--accent);font-size:0.75rem;">Session öffnen →</a></div>`;
+    // Description
+    if (d.beschreibung) {{
+      html += `<div class="detail-desc">${{escHtml(d.beschreibung)}}</div>`;
     }}
 
-    // Group neighbors by type
+    // Metadata
+    if (d.projekt) {{
+      html += `<div class="detail-meta">Projekt: <span>${{escHtml(d.projekt)}}</span></div>`;
+    }}
+    if (d.status) {{
+      const statusColor = d.status === 'erledigt' ? '#6a9955' : d.status === 'offen' ? '#f44747' : '#569cd6';
+      html += `<div class="detail-meta">Status: <span style="color:${{statusColor}}">${{escHtml(d.status)}}</span></div>`;
+    }}
+    if (d.verantwortlich) {{
+      html += `<div class="detail-meta">Verantwortlich: <span>${{escHtml(d.verantwortlich)}}</span></div>`;
+    }}
+    if (d.sessions && d.sessions.length) {{
+      html += `<div class="detail-meta">Sessions: <span>${{d.sessions.length}}</span></div>`;
+    }}
+
+    // Source references (msg_refs) — click to jump to exact message
+    if (d.msg_refs && Object.keys(d.msg_refs).length) {{
+      html += `<div class="detail-section"><h3>Quell-Nachrichten (${{Object.keys(d.msg_refs).length}} Sessions)</h3>`;
+      html += buildMsgRefLinks(d.msg_refs);
+      html += `</div>`;
+    }} else if (d.sessions && d.sessions.length) {{
+      // Fallback: link to sessions without specific message
+      html += `<div class="detail-section"><h3>Quell-Sessions</h3>`;
+      html += '<div style="margin-top:0.3rem;display:flex;flex-wrap:wrap;gap:2px;">';
+      d.sessions.forEach(sid => {{
+        const shortId = sid.substring(0, 8);
+        html += `<a class="msg-link" href="${{BASE}}/session/${{sid}}" target="_blank">${{shortId}}</a>`;
+      }});
+      html += '</div></div>';
+    }}
+
+    // Code reference
+    if (d.code_ref) {{
+      html += `<div class="detail-section"><h3>Code-Referenz</h3><div class="code-ref">${{escHtml(d.code_ref)}}</div></div>`;
+    }}
+
+    // Connected nodes
     const neighbors = getNeighbors(d.id);
     const groups = {{}};
     neighbors.forEach(nb => {{
@@ -1746,20 +1869,18 @@ def render_graph_page():
       groups[key].push(nb);
     }});
 
-    const typeOrder = ['Concept', 'Tag', 'Decision', 'Question', 'Person', 'Session'];
+    const typeOrder = ['Person', 'Projekt', 'Thema', 'Organisation',
+                       'Erkenntnis', 'Entscheidung', 'Meilenstein',
+                       'Aufgabe', 'Herausforderung', 'Spannung', 'Artefakt'];
     typeOrder.forEach(type => {{
       const items = groups[type];
       if (!items || !items.length) return;
       html += `<div class="detail-section"><h3>${{typeLabels[type] || type}} (${{items.length}})</h3>`;
       items.forEach(nb => {{
-        const c = nb.node.type === 'Session' ? (userColors[nb.node.user_id] || typeColors.Session) : typeColors[nb.node.type];
-        const label = nb.node.name.length > 60 ? nb.node.name.substring(0, 57) + '...' : nb.node.name;
+        const c = typeColors[nb.node.type] || '#666';
+        const label = nb.node.name.length > 55 ? nb.node.name.substring(0, 52) + '...' : nb.node.name;
         const edgeHint = edgeLabels[nb.edge] || nb.edge;
-        if (nb.node.type === 'Session' && nb.node.session_id) {{
-          html += `<a class="detail-link" href="${{BASE}}/session/${{nb.node.session_id}}" target="_blank"><span class="dl-dot" style="background:${{c}}"></span>${{escHtml(label)}}<br><span style="font-size:0.6rem;color:var(--fg-dim);margin-left:1.2rem;">${{edgeHint}} · ${{nb.node.user_id}} · ${{(nb.node.last_ts||'').substring(0,10)}}</span></a>`;
-        }} else {{
-          html += `<div class="detail-link" data-focus-id="${{nb.node.id}}"><span class="dl-dot" style="background:${{c}}"></span>${{escHtml(label)}}<span style="font-size:0.6rem;color:var(--fg-dim);"> · ${{edgeHint}}</span></div>`;
-        }}
+        html += `<div class="detail-link" data-focus-id="${{nb.node.id}}"><span class="dl-dot" style="background:${{c}}"></span>${{escHtml(label)}}<span style="font-size:0.6rem;color:var(--fg-dim);"> · ${{edgeHint}}</span></div>`;
       }});
       html += '</div>';
     }});
@@ -1767,7 +1888,6 @@ def render_graph_page():
     detailContent.innerHTML = html;
     detailPanel.classList.add('open');
 
-    // Click on neighbor items to focus them
     detailContent.querySelectorAll('[data-focus-id]').forEach(el => {{
       el.addEventListener('click', () => {{
         const focusId = parseInt(el.dataset.focusId);
@@ -1806,23 +1926,26 @@ def render_graph_page():
     const data = filterData();
     currentNodes = data.nodes;
     currentLinks = data.links;
-    if (!data.nodes.length) return;
+    if (!data.nodes.length) {{
+      loading.textContent = 'Keine Knoten für diesen Filter.';
+      loading.style.display = 'block';
+      return;
+    }}
+    loading.style.display = 'none';
 
     const panelOpen = detailPanel.classList.contains('open');
-    const width = window.innerWidth - (panelOpen ? 360 : 0);
+    const width = window.innerWidth - (panelOpen ? 380 : 0);
     const height = window.innerHeight;
 
     const svg = d3.select('#graph').append('svg')
       .attr('viewBox', [0, 0, width, height]);
-
     const g = svg.append('g');
 
     const zoom = d3.zoom()
-      .scaleExtent([0.1, 8])
+      .scaleExtent([0.05, 10])
       .on('zoom', (e) => g.attr('transform', e.transform));
     svg.call(zoom);
 
-    // Click on background to deselect
     svg.on('click', (e) => {{
       if (e.target === svg.node()) {{
         highlightedNode = null;
@@ -1831,48 +1954,26 @@ def render_graph_page():
       }}
     }});
 
-    function nodeRadius(d) {{
-      if (d.type === 'Tag') return 10;
-      if (d.type === 'Person') return 14;
-      if (d.type === 'Concept') return 13;
-      if (d.type === 'Decision') return 8;
-      if (d.type === 'Question') return 8;
-      return 4 + Math.min(d.msg_count || 0, 200) / 20;
-    }}
+    function nodeRadius(d) {{ return typeSizes[d.type] || 6; }}
+    function nodeColor(d) {{ return typeColors[d.type] || '#666'; }}
 
-    function nodeColor(d) {{
-      if (d.type === 'Session') return userColors[d.user_id] || '#007acc';
-      return typeColors[d.type] || '#666';
-    }}
+    const linkDist = {{ IN_PROJEKT: 100, GEHOERT_ZU: 80, BETRIFFT: 70,
+                       VERANTWORTLICH: 90, VON: 80, ARBEITET_AN: 120, HAT_THEMA: 70 }};
 
     const sim = d3.forceSimulation(data.nodes)
-      .force('link', d3.forceLink(data.links).id(d => d.id).distance(d => {{
-        if (d.type === 'SIMILAR') return 60;
-        if (d.type === 'TAGGED') return 80;
-        if (d.type === 'FOLLOWS') return 40;
-        if (d.type === 'DISCUSSES') return 70;
-        if (d.type === 'LED_TO') return 60;
-        if (d.type === 'RAISED') return 60;
-        if (d.type === 'MENTIONS') return 90;
-        return 70;
-      }}))
-      .force('charge', d3.forceManyBody().strength(d => {{
-        if (d.type === 'Tag') return -150;
-        if (d.type === 'Person') return -300;
-        if (d.type === 'Concept') return -250;
-        if (d.type === 'Decision') return -100;
-        if (d.type === 'Question') return -120;
-        return -50;
-      }}))
+      .force('link', d3.forceLink(data.links).id(d => d.id)
+        .distance(d => linkDist[d.type] || 80))
+      .force('charge', d3.forceManyBody()
+        .strength(d => typeCharge[d.type] || -100))
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 2));
+      .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 3));
 
     linkElements = g.append('g')
       .selectAll('line')
       .data(data.links)
       .join('line')
       .attr('stroke', d => edgeColors[d.type] || '#3c3c3c44')
-      .attr('stroke-width', d => d.type === 'SIMILAR' ? 1.5 : 0.8);
+      .attr('stroke-width', 1);
 
     nodeElements = g.append('g')
       .selectAll('circle')
@@ -1881,7 +1982,7 @@ def render_graph_page():
       .attr('r', nodeRadius)
       .attr('fill', nodeColor)
       .attr('stroke', '#1e1e1e')
-      .attr('stroke-width', 1)
+      .attr('stroke-width', 1.5)
       .style('cursor', 'pointer')
       .call(d3.drag()
         .on('start', (e, d) => {{ if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }})
@@ -1889,47 +1990,48 @@ def render_graph_page():
         .on('end', (e, d) => {{ if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }})
       );
 
+    // Labels only for large nodes or when filtered
+    const showLabels = typeFilter !== 'all' || data.nodes.length < 200;
+    const labelTypes = new Set(['Person', 'Projekt', 'Thema', 'Organisation',
+                                 'Erkenntnis', 'Entscheidung', 'Meilenstein']);
     labelElements = g.append('g')
       .selectAll('text')
-      .data(data.nodes.filter(d => d.type !== 'Session'))
+      .data(data.nodes.filter(d => showLabels || labelTypes.has(d.type)))
       .join('text')
-      .text(d => {{
-        if (d.type === 'Decision' || d.type === 'Question') return d.name.length > 35 ? d.name.substring(0, 32) + '...' : d.name;
-        return d.name;
+      .text(d => d.name.length > 30 ? d.name.substring(0, 28) + '…' : d.name)
+      .attr('font-size', d => {{
+        if (d.type === 'Projekt') return '12px';
+        if (['Person', 'Organisation'].includes(d.type)) return '11px';
+        if (['Thema', 'Erkenntnis', 'Entscheidung', 'Meilenstein'].includes(d.type)) return '9px';
+        return '7px';
       }})
-      .attr('font-size', d => d.type === 'Person' ? '11px' : d.type === 'Concept' ? '10px' : '8px')
-      .attr('fill', d => d.type === 'Question' ? '#f4474799' : d.type === 'Decision' ? '#dcdcaa99' : '#999')
+      .attr('fill', d => (typeColors[d.type] || '#999') + 'aa')
       .attr('text-anchor', 'middle')
-      .attr('dy', d => nodeRadius(d) + 12)
+      .attr('dy', d => nodeRadius(d) + 11)
       .style('pointer-events', 'none')
       .style('font-family', 'var(--sans)');
 
-    // Hover tooltip
     nodeElements.on('mouseover', (e, d) => {{
       const neighbors = getNeighbors(d.id);
       let html = '<div class="tt-type">' + (typeLabels[d.type] || d.type) + '</div>';
       html += '<div class="tt-name">' + escHtml(d.name) + '</div>';
-      if (d.type === 'Session') {{
-        html += '<div class="tt-detail">' + (d.user_id || '') + ' · ' + (d.msg_count || 0) + ' msgs · ' + (d.last_ts || '').substring(0, 10) + '</div>';
+      if (d.beschreibung) {{
+        html += '<div class="tt-detail" style="margin-top:0.2rem">' + escHtml(d.beschreibung.substring(0, 100)) + (d.beschreibung.length > 100 ? '…' : '') + '</div>';
       }}
-      // Show connected count by type
+      if (d.projekt) html += '<div class="tt-detail">Projekt: ' + escHtml(d.projekt) + '</div>';
+      if (d.status) html += '<div class="tt-detail">Status: ' + escHtml(d.status) + '</div>';
       const counts = {{}};
       neighbors.forEach(nb => {{ counts[nb.node.type] = (counts[nb.node.type] || 0) + 1; }});
-      const parts = [];
-      if (counts.Session) parts.push(counts.Session + ' Sessions');
-      if (counts.Concept) parts.push(counts.Concept + ' Konzepte');
-      if (counts.Tag) parts.push(counts.Tag + ' Tags');
-      if (counts.Decision) parts.push(counts.Decision + ' Entsch.');
-      if (counts.Question) parts.push(counts.Question + ' Fragen');
-      if (counts.Person) parts.push(counts.Person + ' Personen');
-      if (parts.length) html += '<div class="tt-detail">' + parts.join(' · ') + '</div>';
+      const parts = Object.entries(counts).map(([t, c]) => c + ' ' + (typeLabels[t] || t));
+      if (parts.length) html += '<div class="tt-detail" style="margin-top:0.2rem">' + parts.join(' · ') + '</div>';
+      if (d.sessions && d.sessions.length) html += '<div class="tt-detail">' + d.sessions.length + ' Quell-Sessions</div>';
       html += '<div class="tt-hint">Klicken für Details</div>';
       tooltip.innerHTML = html;
       tooltip.style.display = 'block';
     }})
     .on('mousemove', (e) => {{
       tooltip.style.left = (e.clientX + 14) + 'px';
-      tooltip.style.top = (e.clientY - 10) + 'px';
+      tooltip.style.top = Math.min(e.clientY - 10, window.innerHeight - 200) + 'px';
     }})
     .on('mouseout', () => {{ tooltip.style.display = 'none'; }})
     .on('click', (e, d) => {{
@@ -1949,25 +2051,28 @@ def render_graph_page():
     setTimeout(() => {{
       const bounds = g.node().getBBox();
       if (bounds.width > 0) {{
-        const scale = Math.min(width / (bounds.width + 100), height / (bounds.height + 100), 2) * 0.85;
+        const scale = Math.min(width / (bounds.width + 120), height / (bounds.height + 120), 1.5) * 0.85;
         const tx = width / 2 - (bounds.x + bounds.width / 2) * scale;
         const ty = height / 2 - (bounds.y + bounds.height / 2) * scale;
-        svg.transition().duration(750).call(
+        svg.transition().duration(800).call(
           zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale)
         );
       }}
-    }}, 2000);
+    }}, 2500);
 
     updateHighlight();
   }}
 
-  function escHtml(s) {{ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }}
+  function escHtml(s) {{
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }}
 
-  document.querySelectorAll('[data-filter]').forEach(btn => {{
+  document.querySelectorAll('[data-type]').forEach(btn => {{
     btn.addEventListener('click', () => {{
-      document.querySelectorAll('[data-filter]').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('[data-type]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      userFilter = btn.dataset.filter;
+      typeFilter = btn.dataset.type;
       renderGraph();
     }});
   }});
