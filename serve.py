@@ -57,6 +57,156 @@ API_KEY = os.environ.get("ARCHIVE_API_KEY", "")
 # Base path prefix for reverse proxy (e.g. "/archive" when behind /archive/*)
 BASE_PATH = os.environ.get("BASE_PATH", "").rstrip("/")
 
+# --- Kuratiertes Tag-Set ---
+# Erweitert sich nur wenn wirklich eine neue Kategorie nötig ist.
+ALLOWED_TAGS = {
+    # Projekte
+    "web-of-trust", "real-life-stack", "real-life-network", "money-printer",
+    "eli", "utopia-map", "yoga-vidya",
+    # Technik
+    "architektur", "frontend", "deployment", "testing", "debugging",
+    "datenbank", "kryptographie", "api", "performance", "sicherheit", "design",
+    # Konzepte
+    "dezentralisierung", "identität", "vertrauen", "gemeinschaft",
+    "souveränität", "offline-first", "erinnerung", "messaging",
+    # Mensch & Vision
+    "persönliches", "vision", "reflexion", "beziehungen", "familie",
+    "autonomie", "heilung", "zusammenarbeit",
+    # Praxis
+    "dokumentation", "finanzierung", "strategie", "recherche", "infrastruktur",
+    # Erweitert (bei Migration hinzugefügt)
+    "visualisierung", "rechtliches", "ai",
+}
+
+# Mapping: alter Tag → neuer Tag (oder None = löschen)
+TAG_MIGRATION = {
+    # design
+    "responsive-design": "design", "responsives-design": "design",
+    "ui-design": "design", "ui-ux": "design", "ui-ux-design": "design",
+    "ui": "design", "ui-components": "design", "ui-layout": "design",
+    "grid-layout": "design", "template-system": "design",
+    "design-produktion": "design", "design-und-produktion": "design",
+    "farb-management": "design", "image-processing": "design",
+    "branding": "design", "web-presence": "design", "web-projekt": "design",
+    # gemeinschaft
+    "community": "gemeinschaft", "gesellschaft": "gemeinschaft",
+    # visualisierung
+    "visualization": "visualisierung", "netzwerk-darstellung": "visualisierung",
+    "graphen-analyse": "visualisierung", "dashboard": "visualisierung",
+    # reflexion
+    "reflection": "reflexion", "selbstreflexion": "reflexion",
+    "ego-reflexion": "reflexion", "ego-selbsterkenntnis": "reflexion",
+    # finanzierung
+    "funding": "finanzierung", "funding-grants": "finanzierung",
+    "geld-und-wirtschaft": "finanzierung", "cost-optimization": "finanzierung",
+    # datenbank
+    "datei-verwaltung": "datenbank", "dateimanagement": "datenbank",
+    "datenverwaltung": "datenbank", "speicher-verwaltung": "datenbank",
+    "speicherung": "datenbank", "storage": "datenbank", "web-storage": "datenbank",
+    "persistenz": "datenbank", "persistierung": "datenbank",
+    "daten-migration": "datenbank", "datenmigration": "datenbank",
+    "datenbereinigung": "datenbank", "vektordatenbank": "datenbank",
+    "vektordatenbanken": "datenbank", "clustering": "datenbank",
+    # sicherheit
+    "zugriff-kontrolle": "sicherheit", "zugriffskontrolle": "sicherheit",
+    "access-control": "sicherheit", "datenschutz": "sicherheit",
+    "authentifizierung": "sicherheit", "verifikation": "sicherheit",
+    # infrastructure
+    "infrastructure": "infrastruktur", "server-konfiguration": "infrastruktur",
+    "hardware": "infrastruktur", "whisper": "infrastruktur",
+    # money-printer
+    "money-printing": "money-printer", "geld-druck": "money-printer", "druck": "money-printer",
+    # autonomie
+    "autonomie-und-eigenstaendigkeit": "autonomie",
+    # erinnerung
+    "erinnerungen": "erinnerung", "memory-management": "erinnerung",
+    "memory-system": "erinnerung", "archiv": "erinnerung",
+    "archivierung": "erinnerung", "archiv-system": "erinnerung",
+    # debugging
+    "bug-fixes": "debugging", "bug-fixing": "debugging",
+    "troubleshooting": "debugging", "fehlerbehandlung": "debugging",
+    # persönliches
+    "körperpflege": "persönliches", "wellness": "persönliches",
+    "schmerzen": "persönliches", "gesundheit": "persönliches",
+    "schweiz": "persönliches", "alltäglich": "persönliches",
+    "arbeitsbereich": "persönliches", "desktop-verwaltung": "persönliches",
+    # rechtliches
+    "rechtlich": "rechtliches", "rechtsformen": "rechtliches",
+    "lizenzierung": "rechtliches", "gemeinnützigkeit": "rechtliches",
+    # identität
+    "profil-management": "identität", "profil-verwaltung": "identität",
+    # dezentralisierung
+    "netzwerk": "dezentralisierung", "networking": "dezentralisierung",
+    "netzwerk-design": "dezentralisierung", "peer-to-peer": "dezentralisierung",
+    "blockchain": "dezentralisierung", "dezentral": "dezentralisierung",
+    # zusammenarbeit
+    "kollaboration": "zusammenarbeit", "kooperation": "zusammenarbeit",
+    "kommunikation": "zusammenarbeit",
+    # architektur
+    "modul-entwicklung": "architektur", "modul-system": "architektur",
+    "frontend-architektur": "architektur", "datenmodellierung": "architektur",
+    "datenstruktur": "architektur",
+    # frontend
+    "demo-app": "frontend", "prototyping": "frontend", "landingpage": "frontend",
+    # eli
+    "remote-mcp": "eli", "mcp": "eli",
+    # offline-first
+    "synchronisierung": "offline-first", "lokale-erste": "offline-first",
+    # ai
+    "prompt-engineering": "ai", "ai-ethik": "ai", "ai-frameworks": "ai",
+    "ai-integration": "ai", "ai-tools": "ai", "ki-beratung": "ai",
+    "maschinelles-lernen": "ai", "gemini-api": "ai",
+    # strategie
+    "marktforschung": "strategie", "geschäftsentwicklung": "strategie",
+    "karriere-entwicklung": "strategie", "freelancing": "strategie",
+    "governance": "strategie", "it-governance": "strategie",
+    # utopia-map
+    "geo-daten": "utopia-map", "geographie": "utopia-map",
+    # vision
+    "nachhaltigkeit": "vision", "philosophie": "vision",
+    # testing
+    "qualitätssicherung": "testing", "linting": "testing",
+    "code-qualität": "testing", "code-review": "testing", "refactoring": "testing",
+    # api
+    "api-integration": "api",
+    # entfernen (zu generisch oder irrelevant)
+    "development": None, "entwicklung": None, "web-development": None,
+    "web-entwicklung": None, "app-entwicklung": None,
+    "projekt-management": None, "projekt-planung": None,
+    "projekt-setup": None, "projektsetup": None, "projekt-verwaltung": None,
+    "projekt-analyse": None, "organisationsstruktur": None, "organisatorisches": None,
+    "pdf-verarbeitung": None, "pdf-processing": None, "text-processing": None,
+    "text-verarbeitung": None, "directus": None,
+    "open-source": None, "versionskontrolle": None,
+    "suche": None, "datei-suche": None,
+    "i18n": None, "routing": None, "react": None, "state-management": None,
+    "rendering": None, "initialisierung": None, "konfiguration": None,
+    "limitations": None, "analyse": None, "anforderungen": None,
+    "anfragen-verhalten": None, "feature-implementation": None,
+    "development-workflow": None, "kostenkontrolle": None,
+    "kostenverwaltung": None, "resource-management": None,
+    "workspace-management": None, "repository": None, "repository-struktur": None,
+    "integration": None, "automatisierung": None, "3d-grafik": None,
+    "daten-analyse": None,
+}
+
+
+def normalize_tags(tags: list[str]) -> list[str]:
+    """Map raw tags to the curated set. Unknown tags pass through if sensible."""
+    result = set()
+    for tag in tags:
+        tag = tag.lower().strip()
+        if tag in TAG_MIGRATION:
+            mapped = TAG_MIGRATION[tag]
+            if mapped:  # None = delete
+                result.add(mapped)
+        elif tag in ALLOWED_TAGS:
+            result.add(tag)
+        else:
+            # Unknown tag — keep it (the set can grow if it makes sense)
+            result.add(tag)
+    return sorted(result)
+
 # Chroma connection (same server as Eli's memories)
 CHROMA_HOST = os.environ.get("CHROMA_HOST", "localhost")
 CHROMA_PORT = int(os.environ.get("CHROMA_PORT", "8000"))
@@ -703,8 +853,9 @@ Gib zurück:
 6. "mentions": Alle erwähnten Personen als Liste. Bekannte Namen: anton, timo, eli, sebastian, tillmann, mathias. Nur lowercase Vornamen. Leeres Array wenn keine.
 
 Tag-Regeln:
+- Wähle Tags AUS DIESER LISTE (bevorzugt!): {', '.join(sorted(ALLOWED_TAGS))}
+- Nur wenn KEINER dieser Tags passt, darfst du einen neuen vorschlagen — aber nur übergeordnete Kategorien, nie spezifische Tools/Libraries
 - Kleingeschrieben, Bindestriche statt Leerzeichen
-- RICHTIG: "web-of-trust", "infrastruktur", "persönliches", "architektur", "design", "eli", "deployment", "testing", "kryptographie", "real-life-network"
 - FALSCH: "ms-sql-zugriff", "html-entities", "forgejo-self-hosted", "nginx-config" (zu spezifisch!)
 
 Concept-Regeln:
@@ -742,7 +893,7 @@ Gespräch:
         parsed = json.loads(text)
         return {
             "summary": parsed.get("summary", ""),
-            "tags": parsed.get("tags", []),
+            "tags": normalize_tags(parsed.get("tags", [])),
             "concepts": parsed.get("concepts", []),
             "decisions": parsed.get("decisions", []),
             "questions": parsed.get("questions", []),
