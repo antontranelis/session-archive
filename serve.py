@@ -1909,8 +1909,9 @@ def render_graph_page():
   }};
 
   let graphData = null;
-  let typeFilter = 'all';
-  let edgeFilter = 'all';
+  // Multi-select sets: null = show all, Set = show only these
+  let activeTypes = null;   // null means "all"
+  let activeEdges = null;   // null means "all"
   let highlightedNode = null;
   let currentNodes = [];
   let currentLinks = [];
@@ -1930,8 +1931,8 @@ def render_graph_page():
     let nodes = graphData.nodes;
     let links = graphData.links;
 
-    if (typeFilter !== 'all') {{
-      const primaryIds = new Set(nodes.filter(n => n.type === typeFilter).map(n => n.id));
+    if (activeTypes !== null) {{
+      const primaryIds = new Set(nodes.filter(n => activeTypes.has(n.type)).map(n => n.id));
       const connectedIds = new Set(primaryIds);
       links.forEach(l => {{
         const src = typeof l.source === 'object' ? l.source.id : l.source;
@@ -1948,8 +1949,8 @@ def render_graph_page():
       }});
     }}
 
-    if (edgeFilter !== 'all') {{
-      links = links.filter(l => l.type === edgeFilter);
+    if (activeEdges !== null) {{
+      links = links.filter(l => activeEdges.has(l.type));
       const linked = new Set();
       links.forEach(l => {{
         linked.add(typeof l.source === 'object' ? l.source.id : l.source);
@@ -1978,19 +1979,17 @@ def render_graph_page():
     return neighbors;
   }}
 
-  function buildMsgRefLinks(msgRefs) {{
-    if (!msgRefs || typeof msgRefs !== 'object') return '';
+  // msg_refs = [5, 28]  (list of 0-based message indices within the session)
+  // sessions  = ['061d22f6', ...]  (list of session IDs)
+  function buildMsgRefLinks(msgRefs, sessions) {{
+    if (!Array.isArray(msgRefs) || !msgRefs.length) return '';
+    if (!sessions || !sessions.length) return '';
+    const sid = sessions[0];
+    const shortId = sid.substring(0, 8);
     let html = '<div style="margin-top:0.3rem;display:flex;flex-wrap:wrap;gap:2px;">';
-    for (const [sid, indices] of Object.entries(msgRefs)) {{
-      const shortId = sid.substring(0, 8);
-      if (Array.isArray(indices) && indices.length) {{
-        indices.forEach(idx => {{
-          html += `<a class="msg-link" href="${{BASE}}/session/${{sid}}#msg-${{idx}}" target="_blank" title="Session ${{shortId}}, Nachricht ${{idx + 1}}">${{shortId}}:${{idx + 1}}</a>`;
-        }});
-      }} else {{
-        html += `<a class="msg-link" href="${{BASE}}/session/${{sid}}" target="_blank" title="Session ${{shortId}}">${{shortId}}</a>`;
-      }}
-    }}
+    msgRefs.forEach(idx => {{
+      html += `<a class="msg-link" href="${{BASE}}/session/${{sid}}#msg-${{idx}}" target="_blank" title="Session ${{shortId}}, Nachricht ${{idx + 1}}">${{shortId}}:${{idx + 1}}</a>`;
+    }});
     html += '</div>';
     return html;
   }}
@@ -2020,9 +2019,9 @@ def render_graph_page():
       html += `<div class="detail-meta">Sessions: <span>${{d.sessions.length}}</span></div>`;
     }}
 
-    if (d.msg_refs && Object.keys(d.msg_refs).length) {{
-      html += `<div class="detail-section"><h3>Quell-Nachrichten (${{Object.keys(d.msg_refs).length}} Sessions)</h3>`;
-      html += buildMsgRefLinks(d.msg_refs);
+    if (d.msg_refs && Array.isArray(d.msg_refs) && d.msg_refs.length && d.sessions && d.sessions.length) {{
+      html += `<div class="detail-section"><h3>Quell-Nachrichten (${{d.msg_refs.length}})</h3>`;
+      html += buildMsgRefLinks(d.msg_refs, d.sessions);
       html += '</div>';
     }} else if (d.sessions && d.sessions.length) {{
       html += '<div class="detail-section"><h3>Quell-Sessions</h3>';
@@ -2167,7 +2166,7 @@ def render_graph_page():
         .on('end', (e, d) => {{ if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }})
       );
 
-    const showLabels = typeFilter !== 'all' || data.nodes.length < 200;
+    const showLabels = activeTypes !== null || data.nodes.length < 200;
     const labelTypes = new Set(['Person', 'Projekt', 'Thema', 'Organisation',
                                  'Erkenntnis', 'Entscheidung', 'Meilenstein']);
     labelElements = g.append('g')
@@ -2244,19 +2243,59 @@ def render_graph_page():
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }}
 
+  // Multi-select node type filter
   document.querySelectorAll('[data-type]').forEach(btn => {{
     btn.addEventListener('click', () => {{
-      document.querySelectorAll('[data-type]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      typeFilter = btn.dataset.type;
+      const t = btn.dataset.type;
+      if (t === 'all') {{
+        // Reset to "all"
+        activeTypes = null;
+        document.querySelectorAll('[data-type]').forEach(b => b.classList.remove('active'));
+        document.querySelector('[data-type="all"]').classList.add('active');
+      }} else {{
+        // Toggle this type
+        document.querySelector('[data-type="all"]').classList.remove('active');
+        if (!activeTypes) activeTypes = new Set();
+        if (activeTypes.has(t)) {{
+          activeTypes.delete(t);
+          btn.classList.remove('active');
+          // If nothing selected, go back to all
+          if (!activeTypes.size) {{
+            activeTypes = null;
+            document.querySelector('[data-type="all"]').classList.add('active');
+          }}
+        }} else {{
+          activeTypes.add(t);
+          btn.classList.add('active');
+        }}
+      }}
       renderGraph();
     }});
   }});
+
+  // Multi-select edge filter
   document.querySelectorAll('[data-edge]').forEach(btn => {{
     btn.addEventListener('click', () => {{
-      document.querySelectorAll('[data-edge]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      edgeFilter = btn.dataset.edge;
+      const e = btn.dataset.edge;
+      if (e === 'all') {{
+        activeEdges = null;
+        document.querySelectorAll('[data-edge]').forEach(b => b.classList.remove('active'));
+        document.querySelector('[data-edge="all"]').classList.add('active');
+      }} else {{
+        document.querySelector('[data-edge="all"]').classList.remove('active');
+        if (!activeEdges) activeEdges = new Set();
+        if (activeEdges.has(e)) {{
+          activeEdges.delete(e);
+          btn.classList.remove('active');
+          if (!activeEdges.size) {{
+            activeEdges = null;
+            document.querySelector('[data-edge="all"]').classList.add('active');
+          }}
+        }} else {{
+          activeEdges.add(e);
+          btn.classList.add('active');
+        }}
+      }}
       renderGraph();
     }});
   }});
