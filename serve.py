@@ -1832,32 +1832,30 @@ def render_graph_page():
   <a href="{BASE_PATH}/">← Archiv</a>
   <div class="filter-label">Knotentyp</div>
   <div class="filter-row">
-    <button class="active" data-type="all">Alle</button>
-    <button data-type="Person">Personen</button>
-    <button data-type="Projekt">Projekte</button>
-    <button data-type="Thema">Themen</button>
-    <button data-type="Organisation">Orgs</button>
+    <button class="active" data-type="Person">Personen</button>
+    <button class="active" data-type="Projekt">Projekte</button>
+    <button class="active" data-type="Thema">Themen</button>
+    <button class="active" data-type="Organisation">Orgs</button>
   </div>
   <div class="filter-row">
-    <button data-type="Aufgabe">Aufgaben</button>
-    <button data-type="Erkenntnis">Erkenntn.</button>
-    <button data-type="Entscheidung">Entscheid.</button>
-    <button data-type="Meilenstein">Meilens.</button>
+    <button class="active" data-type="Aufgabe">Aufgaben</button>
+    <button class="active" data-type="Erkenntnis">Erkenntn.</button>
+    <button class="active" data-type="Entscheidung">Entscheid.</button>
+    <button class="active" data-type="Meilenstein">Meilens.</button>
   </div>
   <div class="filter-row">
-    <button data-type="Herausforderung">Herausf.</button>
-    <button data-type="Spannung">Spannung.</button>
-    <button data-type="Artefakt">Artefakte</button>
+    <button class="active" data-type="Herausforderung">Herausf.</button>
+    <button class="active" data-type="Spannung">Spannung.</button>
+    <button class="active" data-type="Artefakt">Artefakte</button>
   </div>
   <div class="filter-label">Kanten</div>
   <div class="filter-row">
-    <button class="active" data-edge="all">Alle</button>
-    <button data-edge="IN_PROJEKT">Projekt</button>
-    <button data-edge="GEHOERT_ZU">Gehört zu</button>
-    <button data-edge="BETRIFFT">Betrifft</button>
-    <button data-edge="VERANTWORTLICH">Verantw.</button>
-    <button data-edge="VON">Von</button>
-    <button data-edge="HAT_THEMA">Thema</button>
+    <button class="active" data-edge="IN_PROJEKT">Projekt</button>
+    <button class="active" data-edge="GEHOERT_ZU">Gehört zu</button>
+    <button class="active" data-edge="BETRIFFT">Betrifft</button>
+    <button class="active" data-edge="VERANTWORTLICH">Verantw.</button>
+    <button class="active" data-edge="VON">Von</button>
+    <button class="active" data-edge="HAT_THEMA">Thema</button>
   </div>
 </div>
 
@@ -1924,9 +1922,11 @@ def render_graph_page():
   }};
 
   let graphData = null;
-  // Multi-select sets: null = show all, Set = show only these
-  let activeTypes = null;   // null means "all"
-  let activeEdges = null;   // null means "all"
+  // Multi-select sets: all types active by default
+  const ALL_TYPES = new Set(Object.keys(typeColors));
+  const ALL_EDGES = new Set(Object.keys(edgeColors));
+  let activeTypes = new Set(ALL_TYPES);
+  let activeEdges = new Set(ALL_EDGES);
   let highlightedNode = null;
   let currentNodes = [];
   let currentLinks = [];
@@ -1946,7 +1946,7 @@ def render_graph_page():
     let nodes = graphData.nodes;
     let links = graphData.links;
 
-    if (activeTypes !== null) {{
+    if (activeTypes.size < ALL_TYPES.size) {{
       nodes = nodes.filter(n => activeTypes.has(n.type));
       const nodeIds = new Set(nodes.map(n => n.id));
       links = links.filter(l => {{
@@ -1956,7 +1956,7 @@ def render_graph_page():
       }});
     }}
 
-    if (activeEdges !== null) {{
+    if (activeEdges.size < ALL_EDGES.size) {{
       // Only filter edges — nodes stay visible regardless of edge filter
       links = links.filter(l => activeEdges.has(l.type));
       // Still remove edges whose endpoints were removed by the node filter
@@ -2175,7 +2175,7 @@ def render_graph_page():
         .on('end', (e, d) => {{ if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }})
       );
 
-    const showLabels = activeTypes !== null || data.nodes.length < 200;
+    const showLabels = activeTypes.size < ALL_TYPES.size || data.nodes.length < 200;
     const labelTypes = new Set(['Person', 'Projekt', 'Thema', 'Organisation',
                                  'Erkenntnis', 'Entscheidung', 'Meilenstein']);
     labelElements = g.append('g')
@@ -2252,58 +2252,29 @@ def render_graph_page():
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }}
 
-  // Multi-select node type filter
   document.querySelectorAll('[data-type]').forEach(btn => {{
     btn.addEventListener('click', () => {{
       const t = btn.dataset.type;
-      if (t === 'all') {{
-        // Reset to "all"
-        activeTypes = null;
-        document.querySelectorAll('[data-type]').forEach(b => b.classList.remove('active'));
-        document.querySelector('[data-type="all"]').classList.add('active');
+      if (activeTypes.has(t)) {{
+        activeTypes.delete(t);
+        btn.classList.remove('active');
       }} else {{
-        // Toggle this type
-        document.querySelector('[data-type="all"]').classList.remove('active');
-        if (!activeTypes) activeTypes = new Set();
-        if (activeTypes.has(t)) {{
-          activeTypes.delete(t);
-          btn.classList.remove('active');
-          // If nothing selected, go back to all
-          if (!activeTypes.size) {{
-            activeTypes = null;
-            document.querySelector('[data-type="all"]').classList.add('active');
-          }}
-        }} else {{
-          activeTypes.add(t);
-          btn.classList.add('active');
-        }}
+        activeTypes.add(t);
+        btn.classList.add('active');
       }}
       renderGraph();
     }});
   }});
 
-  // Multi-select edge filter
   document.querySelectorAll('[data-edge]').forEach(btn => {{
     btn.addEventListener('click', () => {{
       const e = btn.dataset.edge;
-      if (e === 'all') {{
-        activeEdges = null;
-        document.querySelectorAll('[data-edge]').forEach(b => b.classList.remove('active'));
-        document.querySelector('[data-edge="all"]').classList.add('active');
+      if (activeEdges.has(e)) {{
+        activeEdges.delete(e);
+        btn.classList.remove('active');
       }} else {{
-        document.querySelector('[data-edge="all"]').classList.remove('active');
-        if (!activeEdges) activeEdges = new Set();
-        if (activeEdges.has(e)) {{
-          activeEdges.delete(e);
-          btn.classList.remove('active');
-          if (!activeEdges.size) {{
-            activeEdges = null;
-            document.querySelector('[data-edge="all"]').classList.add('active');
-          }}
-        }} else {{
-          activeEdges.add(e);
-          btn.classList.add('active');
-        }}
+        activeEdges.add(e);
+        btn.classList.add('active');
       }}
       renderGraph();
     }});
