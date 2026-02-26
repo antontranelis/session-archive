@@ -785,6 +785,9 @@ def init_db():
         db.execute("SELECT graph_data FROM sessions LIMIT 1")
     except sqlite3.OperationalError:
         db.execute("ALTER TABLE sessions ADD COLUMN graph_data TEXT")  # JSON: projects, decisions, mentions
+    # Fix HTML entities in titles (e.g. &uuml; → ü)
+    for sid, title in db.execute("SELECT id, title FROM sessions WHERE title LIKE '%&%;%'").fetchall():
+        db.execute("UPDATE sessions SET title = ? WHERE id = ?", (html_mod.unescape(title), sid))
     db.commit()
     return db
 
@@ -959,7 +962,7 @@ def _index_sessions_locked(db: sqlite3.Connection):
             if m["role"] in ("user", "human"):
                 clean = m["text"].strip()
                 if clean and len(clean) > 3:
-                    title = clean[:120]
+                    title = html_mod.unescape(clean[:120])
                     break
         if not title:
             title = f"Session {session_id[:8]}"
@@ -2482,7 +2485,7 @@ def render_session_page(db, session_id):
     # Tags + Summary for session header
     session_meta_extra = ""
     if summary:
-        session_meta_extra += f'<div class="session-summary" style="margin-top:0.5rem;">{html_mod.escape(summary)}</div>'
+        session_meta_extra += f'<div class="session-summary" style="margin-top:0.5rem; margin-bottom:1.5rem; font-style:italic; opacity:0.8;">{html_mod.escape(summary)}</div>'
     if tags_json:
         try:
             tags = json.loads(tags_json)
