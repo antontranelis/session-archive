@@ -26,6 +26,7 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
 CET = ZoneInfo("Europe/Berlin")
+MIN_MSG_COUNT = 3  # Sessions with fewer messages are skipped (warm-up/test sessions)
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, unquote
 from pathlib import Path
@@ -263,8 +264,16 @@ def sync_to_neo4j(db):
         ).fetchall()
 
     print(f"  Neo4j sync: {len(sessions)} Sessions...")
+    session_ids = {s[0] for s in sessions}
 
     with neo4j_driver.session() as neo_session:
+        # Remove sessions from Neo4j that are no longer in SQLite (e.g. warm-ups)
+        neo_sids = [r["id"] for r in neo_session.run("MATCH (s:Session) RETURN s.id as id").data()]
+        stale = [sid for sid in neo_sids if sid not in session_ids]
+        if stale:
+            neo_session.run("MATCH (s:Session) WHERE s.id IN $ids DETACH DELETE s", ids=stale)
+            print(f"  Neo4j: {len(stale)} veraltete Sessions entfernt")
+
         # Create constraints for node types
         for label in ["Project", "Question"]:
             try:
@@ -941,7 +950,7 @@ def _index_sessions_locked(db: sqlite3.Connection):
                     role = msg.get("role", msg_type)
                 messages.append({"role": role, "text": text, "timestamp": ts})
 
-        if len(messages) < 2:
+        if len(messages) < MIN_MSG_COUNT:
             continue
 
         # Title = first meaningful user message
@@ -1040,6 +1049,27 @@ def _index_sessions_locked(db: sqlite3.Connection):
                 "date": date_str,
                 "title": title[:80],
             })
+
+    # Remove sessions below MIN_MSG_COUNT (warm-up/test sessions)
+    warmup_ids = [r[0] for r in db.execute(
+        "SELECT id FROM sessions WHERE msg_count < ?", (MIN_MSG_COUNT,)).fetchall()]
+    if warmup_ids:
+        placeholders = ",".join("?" * len(warmup_ids))
+        db.execute(f"DELETE FROM messages WHERE session_id IN ({placeholders})", warmup_ids)
+        db.execute(f"DELETE FROM sessions WHERE id IN ({placeholders})", warmup_ids)
+        print(f"  Warm-up Sessions entfernt: {len(warmup_ids)} (< {MIN_MSG_COUNT} Nachrichten)")
+        # Remove from Chroma
+        if chroma_collection:
+            chroma_del_ids = []
+            for sid in warmup_ids:
+                chroma_del_ids.append(f"{sid}:summary")
+                # Message chunks use {sid}:{index}
+                for i in range(50):
+                    chroma_del_ids.append(f"{sid}:{i}")
+            try:
+                chroma_collection.delete(ids=chroma_del_ids)
+            except Exception:
+                pass  # IDs that don't exist are silently ignored
 
     db.commit()
 
