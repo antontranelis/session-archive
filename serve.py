@@ -2485,12 +2485,12 @@ def render_session_page(db, session_id):
     # Tags + Summary for session header
     session_meta_extra = ""
     if summary:
-        session_meta_extra += f'<div class="session-summary" style="margin-top:0.5rem; margin-bottom:1.5rem; font-style:italic; opacity:0.8;">{html_mod.escape(summary)}</div>'
+        session_meta_extra += f'<div class="session-summary" style="margin-top:0.5rem; font-style:italic; opacity:0.8;">{html_mod.escape(summary)}</div>'
     if tags_json:
         try:
             tags = json.loads(tags_json)
             tags_html = " ".join(f'<a href="{BASE_PATH}/?q={html_mod.escape(t)}" class="tag">{html_mod.escape(t)}</a>' for t in tags)
-            session_meta_extra += f'<div class="session-tags" style="margin-top:0.3rem;">{tags_html}</div>'
+            session_meta_extra += f'<div class="session-tags" style="margin-top:0.3rem; margin-bottom:1.5rem;">{tags_html}</div>'
         except (json.JSONDecodeError, TypeError):
             pass
 
