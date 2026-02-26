@@ -266,7 +266,7 @@ def sync_to_neo4j(db):
 
     with neo4j_driver.session() as neo_session:
         # Create constraints for node types
-        for label in ["Project", "Decision", "Question"]:
+        for label in ["Project", "Question"]:
             try:
                 neo_session.run(f"CREATE CONSTRAINT IF NOT EXISTS FOR (n:{label}) REQUIRE n.name IS UNIQUE")
             except Exception:
@@ -306,7 +306,7 @@ def sync_to_neo4j(db):
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-            # 3b. Graph data: Projects, Decisions, Questions, Mentions
+            # 3b. Graph data: Projects, Mentions
             if graph_data_json:
                 try:
                     gd = json.loads(graph_data_json)
@@ -321,16 +321,6 @@ def sync_to_neo4j(db):
                                 MATCH (s:Session {id: $sid})
                                 MERGE (s)-[:BELONGS_TO]->(p)
                             """, name=pname, sid=sid)
-
-                    # Decision nodes + :LED_TO edges
-                    for decision in gd.get("decisions", []):
-                        if decision.strip():
-                            neo_session.run("""
-                                MERGE (d:Decision {name: $name})
-                                WITH d
-                                MATCH (s:Session {id: $sid})
-                                MERGE (s)-[:LED_TO]->(d)
-                            """, name=decision.strip()[:200], sid=sid)
 
                     # Question nodes are curated manually (not auto-generated)
 
@@ -403,7 +393,7 @@ def get_graph_data():
         # Get all nodes
         result = session.run("""
             MATCH (n)
-            WHERE n:Session OR n:Tag OR n:Person OR n:Project OR n:Decision OR n:Question
+            WHERE n:Session OR n:Tag OR n:Person OR n:Project OR n:Question
             RETURN id(n) as neo_id, labels(n) as labels, properties(n) as props
         """)
         node_map = {}  # neo_id → index
@@ -428,10 +418,10 @@ def get_graph_data():
                 node["name"] = props.get("name", "?")
             elif label == "Project":
                 node["name"] = props.get("name", "?")
-            elif label == "Decision":
-                node["name"] = props.get("name", "?")
             elif label == "Question":
                 node["name"] = props.get("name", "?")
+                node["status"] = props.get("status", "open")
+                node["project"] = props.get("project", "")
             nodes.append(node)
 
         # Get all relationships
@@ -593,29 +583,6 @@ def graph_query(query_type: str, params: dict) -> dict:
             rows = [{"project": r["project"], "sessions": r["sessions"]} for r in result]
             return {"query": "projects", "user": user or "all", "results": rows}
 
-        elif query_type == "decisions":
-            user = params.get("user", "")
-            if user:
-                result = s.run("""
-                    MATCH (d:Decision)<-[:LED_TO]-(s:Session)
-                    WHERE s.user_id = $user
-                    RETURN d.name AS decision, s.summary AS session_summary,
-                           s.first_ts AS date, s.user_id AS user_id
-                    ORDER BY s.first_ts DESC
-                    LIMIT 30
-                """, user=user)
-            else:
-                result = s.run("""
-                    MATCH (d:Decision)<-[:LED_TO]-(s:Session)
-                    RETURN d.name AS decision, s.summary AS session_summary,
-                           s.first_ts AS date, s.user_id AS user_id
-                    ORDER BY s.first_ts DESC
-                    LIMIT 30
-                """)
-            rows = [{"decision": r["decision"], "session": r["session_summary"][:100] if r["session_summary"] else "",
-                     "date": r["date"] or "", "user": r["user_id"] or ""} for r in result]
-            return {"query": "decisions", "user": user or "all", "results": rows}
-
         elif query_type == "questions":
             result = s.run("""
                 MATCH (q:Question)
@@ -679,7 +646,7 @@ def graph_query(query_type: str, params: dict) -> dict:
 
         else:
             return {"error": f"Unbekannter query_type: {query_type}",
-                    "supported": ["bridges", "neighbors", "path", "projects", "decisions",
+                    "supported": ["bridges", "neighbors", "path", "projects",
                                   "questions", "person", "stats"]}
 
 
@@ -854,8 +821,7 @@ Gib zurück:
 1. "summary": Zusammenfassung in 1-3 Sätzen auf Deutsch. Wichtigste Themen und Ergebnisse.
 2. "projects": 1-2 Projekte denen diese Session zugehört. Wähle AUS DIESER LISTE: {', '.join(sorted(PROJECTS))}. Wenn keines passt, leeres Array.
 3. "tags": 2-5 übergeordnete Themen-Tags (KEINE Projekte, die sind separat!).
-4. "decisions": 0-3 konkrete Entscheidungen die getroffen wurden. Kurze Sätze. Nur echte Entscheidungen, nicht "wir haben X besprochen". Leeres Array wenn keine.
-5. "mentions": Alle erwähnten Personen als Liste. Bekannte Namen: anton, timo, eli, sebastian, tillmann, mathias. Nur lowercase Vornamen. Leeres Array wenn keine.
+4. "mentions": Alle erwähnten Personen als Liste. Bekannte Namen: anton, timo, eli, sebastian, tillmann, mathias. Nur lowercase Vornamen. Leeres Array wenn keine.
 
 Tag-Regeln:
 - Wähle Tags AUS DIESER LISTE (bevorzugt!): {', '.join(sorted(ALLOWED_TAGS))}
@@ -865,7 +831,7 @@ Tag-Regeln:
 - FALSCH als Tag: "web-of-trust", "eli", "money-printer" (das sind Projekte, keine Tags!)
 
 Antworte NUR mit validem JSON, kein anderer Text.
-Beispiel: {{"summary": "WoT Demo-App Tests aufgesetzt.", "projects": ["web-of-trust"], "tags": ["testing", "kryptographie"], "decisions": ["did:key als DID-Methode gewählt"], "mentions": ["anton", "timo"]}}
+Beispiel: {{"summary": "WoT Demo-App Tests aufgesetzt.", "projects": ["web-of-trust"], "tags": ["testing", "kryptographie"], "mentions": ["anton", "timo"]}}
 
 Gespräch:
 {transcript}"""
@@ -899,7 +865,6 @@ Gespräch:
             "summary": parsed.get("summary", ""),
             "tags": tags,
             "projects": projects,
-            "decisions": parsed.get("decisions", []),
             "mentions": parsed.get("mentions", []),
         }
     except Exception as e:
@@ -1784,30 +1749,27 @@ def render_graph_page():
   <a href="{BASE_PATH}/">← Archiv</a>
   <div class="filter-label">User</div>
   <div class="filter-row">
-    <button class="active" data-filter="all">Alle</button>
-    <button data-filter="anton">Anton</button>
-    <button data-filter="timo">Timo</button>
+    <button class="active" data-user="anton">Anton</button>
+    <button class="active" data-user="timo">Timo</button>
   </div>
   <div class="filter-label">Zeige</div>
   <div class="filter-row">
-    <button class="active" data-edge="all">Alles</button>
-    <button data-edge="TAGGED">Tags</button>
-    <button data-edge="SIMILAR">Ähnlich</button>
-    <button data-edge="BELONGS_TO">Projekte</button>
-    <button data-edge="LED_TO">Entscheid.</button>
-    <button data-edge="RAISED">Fragen</button>
-    <button data-edge="MENTIONS">Personen</button>
+    <button class="active" data-show="Sessions">Sessions</button>
+    <button class="active" data-show="Tags">Tags</button>
+    <button class="active" data-show="Projects">Projekte</button>
+    <button class="active" data-show="Questions">Offene Punkte</button>
+    <button class="active" data-show="Persons">Personen</button>
+    <button data-show="Similar">Ähnlich</button>
   </div>
 </div>
 
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:#007acc"></div> Session (Anton)</div>
   <div class="legend-item"><div class="legend-dot" style="background:#e5a33d"></div> Session (Timo)</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#e06c75;width:14px;height:14px"></div> Projekt</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e06c75"></div> Projekt</div>
   <div class="legend-item"><div class="legend-dot" style="background:#c586c0"></div> Tag</div>
   <div class="legend-item"><div class="legend-dot" style="background:#6a9955"></div> Person</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#dcdcaa"></div> Entscheidung</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#f44747"></div> Offene Frage</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f44747"></div> Offener Punkt</div>
 </div>
 
 <script src="https://d3js.org/d3.v7.min.js"></script>
@@ -1826,26 +1788,26 @@ def render_graph_page():
 
   const typeColors = {{
     Session: '#007acc', Tag: '#c586c0', Person: '#6a9955',
-    Project: '#e06c75', Decision: '#dcdcaa', Question: '#f44747',
+    Project: '#e06c75', Question: '#f44747',
   }};
   const typeLabels = {{
     Session: 'Session', Tag: 'Tag', Person: 'Person',
-    Project: 'Projekt', Decision: 'Entscheidung', Question: 'Offener Punkt',
+    Project: 'Projekt', Question: 'Offener Punkt',
   }};
   const edgeLabels = {{
     TAGGED: 'getaggt', BY: 'von', FOLLOWS: 'danach', SIMILAR: 'ähnlich',
-    BELONGS_TO: 'gehört zu', LED_TO: 'entschieden', RAISED: 'aufgeworfen', MENTIONS: 'erwähnt',
+    BELONGS_TO: 'gehört zu', ABOUT: 'betrifft', RAISED: 'aufgeworfen', MENTIONS: 'erwähnt',
   }};
   const userColors = {{ anton: '#007acc', timo: '#e5a33d' }};
   const edgeColors = {{
     TAGGED: '#c586c066', BY: '#6a995566', FOLLOWS: '#3c3c3c44',
-    SIMILAR: '#ce917866', BELONGS_TO: '#e06c7566', LED_TO: '#dcdcaa66',
-    RAISED: '#f4474766', MENTIONS: '#6a995544',
+    SIMILAR: '#ce917866', BELONGS_TO: '#e06c7566',
+    ABOUT: '#f4474766', RAISED: '#f4474766', MENTIONS: '#6a995544',
   }};
 
   let graphData = null;
-  let userFilter = 'all';
-  let edgeFilter = 'all';
+  let activeUsers = new Set(['anton', 'timo']);
+  let activeShow = new Set(['Sessions', 'Tags', 'Projects', 'Questions', 'Persons']);
   let highlightedNode = null;
   let currentNodes = [];
   let currentLinks = [];
@@ -1860,39 +1822,66 @@ def render_graph_page():
     }})
     .catch(err => {{ loading.textContent = 'Fehler: ' + err.message; }});
 
+  // Map show-toggle names to node types and edge types
+  const showToNodeTypes = {{
+    Sessions: ['Session'], Tags: ['Tag'], Projects: ['Project'],
+    Questions: ['Question'], Persons: ['Person'],
+  }};
+  const showToEdgeTypes = {{
+    Sessions: ['BY', 'FOLLOWS'], Tags: ['TAGGED'], Projects: ['BELONGS_TO'],
+    Questions: ['ABOUT', 'RAISED'], Persons: ['MENTIONS'],
+    Similar: ['SIMILAR'],
+  }};
+
   function filterData() {{
     if (!graphData) return {{ nodes: [], links: [] }};
-    let nodes = graphData.nodes;
-    let links = graphData.links;
 
-    if (userFilter !== 'all') {{
-      const sessionIds = new Set();
-      nodes.forEach(n => {{ if (n.type === 'Session' && n.user_id === userFilter) sessionIds.add(n.id); }});
-      const connectedIds = new Set(sessionIds);
-      links.forEach(l => {{
-        const src = typeof l.source === 'object' ? l.source.id : l.source;
-        const tgt = typeof l.target === 'object' ? l.target.id : l.target;
-        if (sessionIds.has(src)) connectedIds.add(tgt);
-        if (sessionIds.has(tgt)) connectedIds.add(src);
-      }});
-      nodes = nodes.filter(n => connectedIds.has(n.id));
-      const nodeIds = new Set(nodes.map(n => n.id));
-      links = links.filter(l => {{
-        const src = typeof l.source === 'object' ? l.source.id : l.source;
-        const tgt = typeof l.target === 'object' ? l.target.id : l.target;
-        return nodeIds.has(src) && nodeIds.has(tgt);
+    // 1. Determine which node types and edge types are active
+    const allowedNodeTypes = new Set();
+    const allowedEdgeTypes = new Set();
+    activeShow.forEach(key => {{
+      (showToNodeTypes[key] || []).forEach(t => allowedNodeTypes.add(t));
+      (showToEdgeTypes[key] || []).forEach(t => allowedEdgeTypes.add(t));
+    }});
+    // Sessions are always structurally needed if any category is on
+    if (activeShow.size > 0) allowedNodeTypes.add('Session');
+
+    // 2. Start with allowed nodes
+    let nodes = graphData.nodes.filter(n => allowedNodeTypes.has(n.type));
+
+    // 3. User filter: remove sessions from inactive users + their orphaned connections
+    if (activeUsers.size < 2) {{
+      nodes = nodes.filter(n => {{
+        if (n.type === 'Session') return activeUsers.has(n.user_id);
+        return true;
       }});
     }}
 
-    if (edgeFilter !== 'all') {{
-      links = links.filter(l => l.type === edgeFilter);
-      const linked = new Set();
-      links.forEach(l => {{
-        linked.add(typeof l.source === 'object' ? l.source.id : l.source);
-        linked.add(typeof l.target === 'object' ? l.target.id : l.target);
-      }});
-      nodes = nodes.filter(n => linked.has(n.id));
-    }}
+    const nodeIds = new Set(nodes.map(n => n.id));
+
+    // 4. Filter edges: must be allowed type AND both endpoints present
+    let links = graphData.links.filter(l => {{
+      if (!allowedEdgeTypes.has(l.type)) return false;
+      const src = typeof l.source === 'object' ? l.source.id : l.source;
+      const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+      return nodeIds.has(src) && nodeIds.has(tgt);
+    }});
+
+    // 5. Remove non-Session nodes that have no remaining edges (orphans)
+    const linked = new Set();
+    links.forEach(l => {{
+      linked.add(typeof l.source === 'object' ? l.source.id : l.source);
+      linked.add(typeof l.target === 'object' ? l.target.id : l.target);
+    }});
+    nodes = nodes.filter(n => n.type === 'Session' || linked.has(n.id));
+
+    // Recheck edges after orphan removal
+    const finalIds = new Set(nodes.map(n => n.id));
+    links = links.filter(l => {{
+      const src = typeof l.source === 'object' ? l.source.id : l.source;
+      const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+      return finalIds.has(src) && finalIds.has(tgt);
+    }});
 
     return {{ nodes: JSON.parse(JSON.stringify(nodes)), links: JSON.parse(JSON.stringify(links)) }};
   }}
@@ -1939,7 +1928,7 @@ def render_graph_page():
       groups[key].push(nb);
     }});
 
-    const typeOrder = ['Project', 'Tag', 'Decision', 'Question', 'Person', 'Session'];
+    const typeOrder = ['Project', 'Tag', 'Question', 'Person', 'Session'];
     typeOrder.forEach(type => {{
       const items = groups[type];
       if (!items || !items.length) return;
@@ -2096,7 +2085,6 @@ def render_graph_page():
       if (d.type === 'Project') return 18;
       if (d.type === 'Tag') return 10;
       if (d.type === 'Person') return 14;
-      if (d.type === 'Decision') return 8;
       if (d.type === 'Question') return 8;
       return 4 + Math.min(d.msg_count || 0, 200) / 20;
     }}
@@ -2112,7 +2100,7 @@ def render_graph_page():
         if (d.type === 'TAGGED') return 80;
         if (d.type === 'FOLLOWS') return 40;
         if (d.type === 'BELONGS_TO') return 100;
-        if (d.type === 'LED_TO') return 60;
+        if (d.type === 'ABOUT') return 60;
         if (d.type === 'RAISED') return 60;
         if (d.type === 'MENTIONS') return 90;
         return 70;
@@ -2121,7 +2109,6 @@ def render_graph_page():
         if (d.type === 'Project') return -500;
         if (d.type === 'Tag') return -150;
         if (d.type === 'Person') return -300;
-        if (d.type === 'Decision') return -100;
         if (d.type === 'Question') return -120;
         return -50;
       }}))
@@ -2155,12 +2142,12 @@ def render_graph_page():
       .data(data.nodes.filter(d => d.type !== 'Session'))
       .join('text')
       .text(d => {{
-        if (d.type === 'Decision' || d.type === 'Question') return d.name.length > 35 ? d.name.substring(0, 32) + '...' : d.name;
+        if (d.type === 'Question') return d.name.length > 35 ? d.name.substring(0, 32) + '...' : d.name;
         return d.name;
       }})
       .attr('font-size', d => d.type === 'Project' ? '12px' : d.type === 'Person' ? '11px' : '8px')
       .attr('font-weight', d => d.type === 'Project' ? '700' : '400')
-      .attr('fill', d => d.type === 'Project' ? '#e06c75' : d.type === 'Question' ? '#f4474799' : d.type === 'Decision' ? '#dcdcaa99' : '#999')
+      .attr('fill', d => d.type === 'Project' ? '#e06c75' : d.type === 'Question' ? '#f4474799' : '#999')
       .attr('text-anchor', 'middle')
       .attr('dy', d => nodeRadius(d) + 12)
       .style('pointer-events', 'none')
@@ -2181,7 +2168,6 @@ def render_graph_page():
       if (counts.Session) parts.push(counts.Session + ' Sessions');
       if (counts.Project) parts.push(counts.Project + ' Projekte');
       if (counts.Tag) parts.push(counts.Tag + ' Tags');
-      if (counts.Decision) parts.push(counts.Decision + ' Entsch.');
       if (counts.Question) parts.push(counts.Question + ' Offene Punkte');
       if (counts.Person) parts.push(counts.Person + ' Personen');
       if (parts.length) html += '<div class="tt-detail">' + parts.join(' · ') + '</div>';
@@ -2225,19 +2211,25 @@ def render_graph_page():
 
   function escHtml(s) {{ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }}
 
-  document.querySelectorAll('[data-filter]').forEach(btn => {{
+  document.querySelectorAll('[data-user]').forEach(btn => {{
     btn.addEventListener('click', () => {{
-      document.querySelectorAll('[data-filter]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      userFilter = btn.dataset.filter;
+      const user = btn.dataset.user;
+      if (activeUsers.has(user)) {{
+        activeUsers.delete(user); btn.classList.remove('active');
+      }} else {{
+        activeUsers.add(user); btn.classList.add('active');
+      }}
       renderGraph();
     }});
   }});
-  document.querySelectorAll('[data-edge]').forEach(btn => {{
+  document.querySelectorAll('[data-show]').forEach(btn => {{
     btn.addEventListener('click', () => {{
-      document.querySelectorAll('[data-edge]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      edgeFilter = btn.dataset.edge;
+      const key = btn.dataset.show;
+      if (activeShow.has(key)) {{
+        activeShow.delete(key); btn.classList.remove('active');
+      }} else {{
+        activeShow.add(key); btn.classList.add('active');
+      }}
       renderGraph();
     }});
   }});
@@ -2721,7 +2713,6 @@ def main():
                         tags_json = json.dumps(result["tags"], ensure_ascii=False)
                         graph_json = json.dumps({
                             "projects": result.get("projects", []),
-                            "decisions": result.get("decisions", []),
                             "mentions": result.get("mentions", []),
                         }, ensure_ascii=False)
                         with db_lock:
