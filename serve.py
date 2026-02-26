@@ -57,16 +57,20 @@ API_KEY = os.environ.get("ARCHIVE_API_KEY", "")
 # Base path prefix for reverse proxy (e.g. "/archive" when behind /archive/*)
 BASE_PATH = os.environ.get("BASE_PATH", "").rstrip("/")
 
-# --- Kuratiertes Tag-Set ---
+# --- Projekte (eigener Knotentyp im Graph) ---
+PROJECTS = {
+    "web-of-trust", "real-life-stack", "real-life-network", "money-printer",
+    "eli", "utopia-map", "yoga-vidya", "wir-sind-wertvoll", "geburtstagsfeier",
+    "session-archiv",
+}
+
+# --- Kuratiertes Tag-Set (ohne Projekte — die sind separat) ---
 # Erweitert sich nur wenn wirklich eine neue Kategorie nötig ist.
 ALLOWED_TAGS = {
-    # Projekte
-    "web-of-trust", "real-life-stack", "real-life-network", "money-printer",
-    "eli", "utopia-map", "yoga-vidya",
     # Technik
     "architektur", "frontend", "deployment", "testing", "debugging",
     "datenbank", "kryptographie", "api", "performance", "sicherheit", "design",
-    # Konzepte
+    # Konzepte (ex-Concepts, jetzt als Tags)
     "dezentralisierung", "identität", "vertrauen", "gemeinschaft",
     "souveränität", "offline-first", "erinnerung", "messaging",
     # Mensch & Vision
@@ -74,7 +78,7 @@ ALLOWED_TAGS = {
     "autonomie", "heilung", "zusammenarbeit",
     # Praxis
     "dokumentation", "finanzierung", "strategie", "recherche", "infrastruktur",
-    # Erweitert (bei Migration hinzugefügt)
+    # Erweitert
     "visualisierung", "rechtliches", "ai",
 }
 
@@ -191,21 +195,27 @@ TAG_MIGRATION = {
 }
 
 
-def normalize_tags(tags: list[str]) -> list[str]:
-    """Map raw tags to the curated set. Unknown tags pass through if sensible."""
-    result = set()
+def normalize_tags(tags: list[str]) -> tuple[list[str], list[str]]:
+    """Map raw tags to curated set. Returns (tags, projects) separately."""
+    tag_result = set()
+    project_result = set()
     for tag in tags:
         tag = tag.lower().strip()
         if tag in TAG_MIGRATION:
             mapped = TAG_MIGRATION[tag]
-            if mapped:  # None = delete
-                result.add(mapped)
+            if mapped:
+                if mapped in PROJECTS:
+                    project_result.add(mapped)
+                else:
+                    tag_result.add(mapped)
+        elif tag in PROJECTS:
+            project_result.add(tag)
         elif tag in ALLOWED_TAGS:
-            result.add(tag)
+            tag_result.add(tag)
         else:
-            # Unknown tag — keep it (the set can grow if it makes sense)
-            result.add(tag)
-    return sorted(result)
+            # Unknown — keep as tag (the set can grow if it makes sense)
+            tag_result.add(tag)
+    return sorted(tag_result), sorted(project_result)
 
 # Chroma connection (same server as Eli's memories)
 CHROMA_HOST = os.environ.get("CHROMA_HOST", "localhost")
@@ -255,8 +265,8 @@ def sync_to_neo4j(db):
     print(f"  Neo4j sync: {len(sessions)} Sessions...")
 
     with neo4j_driver.session() as neo_session:
-        # Create constraints for new node types
-        for label in ["Concept", "Decision", "Question"]:
+        # Create constraints for node types
+        for label in ["Project", "Decision", "Question"]:
             try:
                 neo_session.run(f"CREATE CONSTRAINT IF NOT EXISTS FOR (n:{label}) REQUIRE n.name IS UNIQUE")
             except Exception:
@@ -296,19 +306,21 @@ def sync_to_neo4j(db):
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-            # 3b. Graph data: Concepts, Decisions, Questions, Mentions
+            # 3b. Graph data: Projects, Decisions, Questions, Mentions
             if graph_data_json:
                 try:
                     gd = json.loads(graph_data_json)
 
-                    # Concept nodes + :DISCUSSES edges
-                    for concept in gd.get("concepts", []):
-                        neo_session.run("""
-                            MERGE (c:Concept {name: $name})
-                            WITH c
-                            MATCH (s:Session {id: $sid})
-                            MERGE (s)-[:DISCUSSES]->(c)
-                        """, name=concept.lower().strip(), sid=sid)
+                    # Project nodes + :BELONGS_TO edges
+                    for project in gd.get("projects", []):
+                        pname = project.lower().strip()
+                        if pname in PROJECTS:
+                            neo_session.run("""
+                                MERGE (p:Project {name: $name})
+                                WITH p
+                                MATCH (s:Session {id: $sid})
+                                MERGE (s)-[:BELONGS_TO]->(p)
+                            """, name=pname, sid=sid)
 
                     # Decision nodes + :LED_TO edges
                     for decision in gd.get("decisions", []):
@@ -399,7 +411,7 @@ def get_graph_data():
         # Get all nodes
         result = session.run("""
             MATCH (n)
-            WHERE n:Session OR n:Tag OR n:Person OR n:Concept OR n:Decision OR n:Question
+            WHERE n:Session OR n:Tag OR n:Person OR n:Project OR n:Decision OR n:Question
             RETURN id(n) as neo_id, labels(n) as labels, properties(n) as props
         """)
         node_map = {}  # neo_id → index
@@ -422,7 +434,7 @@ def get_graph_data():
                 node["name"] = props.get("name", "?")
             elif label == "Person":
                 node["name"] = props.get("name", "?")
-            elif label == "Concept":
+            elif label == "Project":
                 node["name"] = props.get("name", "?")
             elif label == "Decision":
                 node["name"] = props.get("name", "?")
@@ -484,10 +496,10 @@ def graph_query(query_type: str, params: dict) -> dict:
     """Execute predefined graph queries against Neo4j.
 
     Supported query_type values:
-      bridges       — concepts shared between two users (or all users)
+      bridges       — tags shared between two users
       neighbors     — all neighbors of a given node (by name + type)
       path          — shortest path between two nodes
-      concepts      — all concepts, optionally filtered by user
+      projects      — all projects, optionally filtered by user
       decisions     — all decisions, optionally filtered by user
       questions     — all open questions
       person        — everything connected to a person
@@ -498,21 +510,21 @@ def graph_query(query_type: str, params: dict) -> dict:
 
     with neo4j_driver.session() as s:
         if query_type == "bridges":
-            # Concepts that connect two users (or show per-user counts)
+            # Tags that connect two users (shared themes)
             user1 = params.get("user1", "anton")
             user2 = params.get("user2", "timo")
             result = s.run("""
-                MATCH (c:Concept)<-[:DISCUSSES]-(s:Session)
+                MATCH (t:Tag)<-[:TAGGED]-(s:Session)
                 WHERE s.user_id IN [$user1, $user2]
-                WITH c.name AS concept,
+                WITH t.name AS tag,
                      sum(CASE WHEN s.user_id = $user1 THEN 1 ELSE 0 END) AS count1,
                      sum(CASE WHEN s.user_id = $user2 THEN 1 ELSE 0 END) AS count2
                 WHERE count1 > 0 AND count2 > 0
-                RETURN concept, count1, count2, count1 + count2 AS total
+                RETURN tag, count1, count2, count1 + count2 AS total
                 ORDER BY total DESC
                 LIMIT 20
             """, user1=user1, user2=user2)
-            rows = [{"concept": r["concept"], user1: r["count1"], user2: r["count2"], "total": r["total"]}
+            rows = [{"tag": r["tag"], user1: r["count1"], user2: r["count2"], "total": r["total"]}
                     for r in result]
             return {"query": "bridges", "users": [user1, user2], "results": rows}
 
@@ -569,25 +581,25 @@ def graph_query(query_type: str, params: dict) -> dict:
                         "path": path_nodes, "rels": record["rels"]}
             return {"query": "path", "from": from_name, "to": to_name, "path": [], "rels": []}
 
-        elif query_type == "concepts":
+        elif query_type == "projects":
             user = params.get("user", "")
             if user:
                 result = s.run("""
-                    MATCH (c:Concept)<-[:DISCUSSES]-(s:Session)
+                    MATCH (p:Project)<-[:BELONGS_TO]-(s:Session)
                     WHERE s.user_id = $user
-                    RETURN c.name AS concept, count(s) AS sessions
+                    RETURN p.name AS project, count(s) AS sessions
                     ORDER BY sessions DESC
                     LIMIT 30
                 """, user=user)
             else:
                 result = s.run("""
-                    MATCH (c:Concept)<-[:DISCUSSES]-(s:Session)
-                    RETURN c.name AS concept, count(s) AS sessions
+                    MATCH (p:Project)<-[:BELONGS_TO]-(s:Session)
+                    RETURN p.name AS project, count(s) AS sessions
                     ORDER BY sessions DESC
                     LIMIT 30
                 """)
-            rows = [{"concept": r["concept"], "sessions": r["sessions"]} for r in result]
-            return {"query": "concepts", "user": user or "all", "results": rows}
+            rows = [{"project": r["project"], "sessions": r["sessions"]} for r in result]
+            return {"query": "projects", "user": user or "all", "results": rows}
 
         elif query_type == "decisions":
             user = params.get("user", "")
@@ -644,17 +656,17 @@ def graph_query(query_type: str, params: dict) -> dict:
             mentions = [{"summary": r["summary"][:150] if r["summary"] else "", "date": r["date"] or "",
                          "by": r["by_user"] or "", "session_id": r["session_id"]} for r in result_mentions]
 
-            # Concepts connected via sessions
-            result_concepts = s.run("""
-                MATCH (p:Person {name: $name})<-[:BY]-(s:Session)-[:DISCUSSES]->(c:Concept)
-                RETURN c.name AS concept, count(s) AS sessions
+            # Projects connected via sessions
+            result_projects = s.run("""
+                MATCH (p:Person {name: $name})<-[:BY]-(s:Session)-[:BELONGS_TO]->(proj:Project)
+                RETURN proj.name AS project, count(s) AS sessions
                 ORDER BY sessions DESC
                 LIMIT 15
             """, name=name)
-            concepts = [{"concept": r["concept"], "sessions": r["sessions"]} for r in result_concepts]
+            projects = [{"project": r["project"], "sessions": r["sessions"]} for r in result_projects]
 
             return {"query": "person", "name": name,
-                    "sessions": sessions, "mentioned_in": mentions, "concepts": concepts}
+                    "sessions": sessions, "mentioned_in": mentions, "projects": projects}
 
         elif query_type == "stats":
             result = s.run("""
@@ -673,7 +685,7 @@ def graph_query(query_type: str, params: dict) -> dict:
 
         else:
             return {"error": f"Unbekannter query_type: {query_type}",
-                    "supported": ["bridges", "neighbors", "path", "concepts", "decisions",
+                    "supported": ["bridges", "neighbors", "path", "projects", "decisions",
                                   "questions", "person", "stats"]}
 
 
@@ -846,8 +858,8 @@ Die Nachrichten sind gleichmäßig über die gesamte Session verteilt (Anfang, M
 
 Gib zurück:
 1. "summary": Zusammenfassung in 1-3 Sätzen auf Deutsch. Wichtigste Themen und Ergebnisse.
-2. "tags": 3-6 übergeordnete Themen-Tags.
-3. "concepts": 1-5 übergeordnete Konzepte/Ideen, die in dieser Session eine Rolle spielen. Denke abstrakt: nicht "MessagingAdapter implementiert" sondern "messaging", "dezentralisierung". Lowercase, Deutsch.
+2. "projects": 1-2 Projekte denen diese Session zugehört. Wähle AUS DIESER LISTE: {', '.join(sorted(PROJECTS))}. Wenn keines passt, leeres Array.
+3. "tags": 2-5 übergeordnete Themen-Tags (KEINE Projekte, die sind separat!).
 4. "decisions": 0-3 konkrete Entscheidungen die getroffen wurden. Kurze Sätze. Nur echte Entscheidungen, nicht "wir haben X besprochen". Leeres Array wenn keine.
 5. "questions": 0-3 offene Fragen die aufkamen und (noch) nicht beantwortet wurden. Leeres Array wenn keine.
 6. "mentions": Alle erwähnten Personen als Liste. Bekannte Namen: anton, timo, eli, sebastian, tillmann, mathias. Nur lowercase Vornamen. Leeres Array wenn keine.
@@ -857,14 +869,10 @@ Tag-Regeln:
 - Nur wenn KEINER dieser Tags passt, darfst du einen neuen vorschlagen — aber nur übergeordnete Kategorien, nie spezifische Tools/Libraries
 - Kleingeschrieben, Bindestriche statt Leerzeichen
 - FALSCH: "ms-sql-zugriff", "html-entities", "forgejo-self-hosted", "nginx-config" (zu spezifisch!)
-
-Concept-Regeln:
-- Abstrakte Ideen, nicht Implementierungsdetails
-- RICHTIG: "vertrauen", "identität", "dezentralisierung", "offline-first", "gemeinschaft", "souveränität", "heilung", "e2e-verschlüsselung"
-- FALSCH: "evolu-bug", "docker-container", "css-fix"
+- FALSCH als Tag: "web-of-trust", "eli", "money-printer" (das sind Projekte, keine Tags!)
 
 Antworte NUR mit validem JSON, kein anderer Text.
-Beispiel: {{"summary": "WoT Demo-App Tests aufgesetzt.", "tags": ["web-of-trust", "testing"], "concepts": ["vertrauen", "dezentralisierung"], "decisions": ["did:key als DID-Methode gewählt"], "questions": ["Wie lösen wir Offline-Discovery?"], "mentions": ["anton", "timo"]}}
+Beispiel: {{"summary": "WoT Demo-App Tests aufgesetzt.", "projects": ["web-of-trust"], "tags": ["testing", "kryptographie"], "decisions": ["did:key als DID-Methode gewählt"], "questions": ["Wie lösen wir Offline-Discovery?"], "mentions": ["anton", "timo"]}}
 
 Gespräch:
 {transcript}"""
@@ -891,10 +899,13 @@ Gespräch:
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         parsed = json.loads(text)
+        # Normalize: split tags and projects, merge any project-named tags into projects
+        all_tags = parsed.get("tags", []) + parsed.get("projects", [])
+        tags, projects = normalize_tags(all_tags)
         return {
             "summary": parsed.get("summary", ""),
-            "tags": normalize_tags(parsed.get("tags", [])),
-            "concepts": parsed.get("concepts", []),
+            "tags": tags,
+            "projects": projects,
             "decisions": parsed.get("decisions", []),
             "questions": parsed.get("questions", []),
             "mentions": parsed.get("mentions", []),
@@ -1790,7 +1801,7 @@ def render_graph_page():
     <button class="active" data-edge="all">Alles</button>
     <button data-edge="TAGGED">Tags</button>
     <button data-edge="SIMILAR">Ähnlich</button>
-    <button data-edge="DISCUSSES">Konzepte</button>
+    <button data-edge="BELONGS_TO">Projekte</button>
     <button data-edge="LED_TO">Entscheid.</button>
     <button data-edge="RAISED">Fragen</button>
     <button data-edge="MENTIONS">Personen</button>
@@ -1800,9 +1811,9 @@ def render_graph_page():
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:#007acc"></div> Session (Anton)</div>
   <div class="legend-item"><div class="legend-dot" style="background:#e5a33d"></div> Session (Timo)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e06c75;width:14px;height:14px"></div> Projekt</div>
   <div class="legend-item"><div class="legend-dot" style="background:#c586c0"></div> Tag</div>
   <div class="legend-item"><div class="legend-dot" style="background:#6a9955"></div> Person</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#569cd6"></div> Konzept</div>
   <div class="legend-item"><div class="legend-dot" style="background:#dcdcaa"></div> Entscheidung</div>
   <div class="legend-item"><div class="legend-dot" style="background:#f44747"></div> Offene Frage</div>
 </div>
@@ -1823,20 +1834,20 @@ def render_graph_page():
 
   const typeColors = {{
     Session: '#007acc', Tag: '#c586c0', Person: '#6a9955',
-    Concept: '#569cd6', Decision: '#dcdcaa', Question: '#f44747',
+    Project: '#e06c75', Decision: '#dcdcaa', Question: '#f44747',
   }};
   const typeLabels = {{
     Session: 'Session', Tag: 'Tag', Person: 'Person',
-    Concept: 'Konzept', Decision: 'Entscheidung', Question: 'Offene Frage',
+    Project: 'Projekt', Decision: 'Entscheidung', Question: 'Offene Frage',
   }};
   const edgeLabels = {{
     TAGGED: 'getaggt', BY: 'von', FOLLOWS: 'danach', SIMILAR: 'ähnlich',
-    DISCUSSES: 'diskutiert', LED_TO: 'entschieden', RAISED: 'aufgeworfen', MENTIONS: 'erwähnt',
+    BELONGS_TO: 'gehört zu', LED_TO: 'entschieden', RAISED: 'aufgeworfen', MENTIONS: 'erwähnt',
   }};
   const userColors = {{ anton: '#007acc', timo: '#e5a33d' }};
   const edgeColors = {{
     TAGGED: '#c586c066', BY: '#6a995566', FOLLOWS: '#3c3c3c44',
-    SIMILAR: '#ce917866', DISCUSSES: '#569cd666', LED_TO: '#dcdcaa66',
+    SIMILAR: '#ce917866', BELONGS_TO: '#e06c7566', LED_TO: '#dcdcaa66',
     RAISED: '#f4474766', MENTIONS: '#6a995544',
   }};
 
@@ -1936,7 +1947,7 @@ def render_graph_page():
       groups[key].push(nb);
     }});
 
-    const typeOrder = ['Concept', 'Tag', 'Decision', 'Question', 'Person', 'Session'];
+    const typeOrder = ['Project', 'Tag', 'Decision', 'Question', 'Person', 'Session'];
     typeOrder.forEach(type => {{
       const items = groups[type];
       if (!items || !items.length) return;
@@ -2090,9 +2101,9 @@ def render_graph_page():
     }});
 
     function nodeRadius(d) {{
+      if (d.type === 'Project') return 18;
       if (d.type === 'Tag') return 10;
       if (d.type === 'Person') return 14;
-      if (d.type === 'Concept') return 13;
       if (d.type === 'Decision') return 8;
       if (d.type === 'Question') return 8;
       return 4 + Math.min(d.msg_count || 0, 200) / 20;
@@ -2108,16 +2119,16 @@ def render_graph_page():
         if (d.type === 'SIMILAR') return 60;
         if (d.type === 'TAGGED') return 80;
         if (d.type === 'FOLLOWS') return 40;
-        if (d.type === 'DISCUSSES') return 70;
+        if (d.type === 'BELONGS_TO') return 100;
         if (d.type === 'LED_TO') return 60;
         if (d.type === 'RAISED') return 60;
         if (d.type === 'MENTIONS') return 90;
         return 70;
       }}))
       .force('charge', d3.forceManyBody().strength(d => {{
+        if (d.type === 'Project') return -500;
         if (d.type === 'Tag') return -150;
         if (d.type === 'Person') return -300;
-        if (d.type === 'Concept') return -250;
         if (d.type === 'Decision') return -100;
         if (d.type === 'Question') return -120;
         return -50;
@@ -2155,8 +2166,9 @@ def render_graph_page():
         if (d.type === 'Decision' || d.type === 'Question') return d.name.length > 35 ? d.name.substring(0, 32) + '...' : d.name;
         return d.name;
       }})
-      .attr('font-size', d => d.type === 'Person' ? '11px' : d.type === 'Concept' ? '10px' : '8px')
-      .attr('fill', d => d.type === 'Question' ? '#f4474799' : d.type === 'Decision' ? '#dcdcaa99' : '#999')
+      .attr('font-size', d => d.type === 'Project' ? '12px' : d.type === 'Person' ? '11px' : '8px')
+      .attr('font-weight', d => d.type === 'Project' ? '700' : '400')
+      .attr('fill', d => d.type === 'Project' ? '#e06c75' : d.type === 'Question' ? '#f4474799' : d.type === 'Decision' ? '#dcdcaa99' : '#999')
       .attr('text-anchor', 'middle')
       .attr('dy', d => nodeRadius(d) + 12)
       .style('pointer-events', 'none')
@@ -2175,7 +2187,7 @@ def render_graph_page():
       neighbors.forEach(nb => {{ counts[nb.node.type] = (counts[nb.node.type] || 0) + 1; }});
       const parts = [];
       if (counts.Session) parts.push(counts.Session + ' Sessions');
-      if (counts.Concept) parts.push(counts.Concept + ' Konzepte');
+      if (counts.Project) parts.push(counts.Project + ' Projekte');
       if (counts.Tag) parts.push(counts.Tag + ' Tags');
       if (counts.Decision) parts.push(counts.Decision + ' Entsch.');
       if (counts.Question) parts.push(counts.Question + ' Fragen');
@@ -2716,7 +2728,7 @@ def main():
                     if result:
                         tags_json = json.dumps(result["tags"], ensure_ascii=False)
                         graph_json = json.dumps({
-                            "concepts": result.get("concepts", []),
+                            "projects": result.get("projects", []),
                             "decisions": result.get("decisions", []),
                             "questions": result.get("questions", []),
                             "mentions": result.get("mentions", []),
@@ -2727,7 +2739,7 @@ def main():
                                 (result["summary"], tags_json, graph_json, sid),
                             )
                             db.commit()
-                        print(f"  Summary: {sid[:8]} — {result['tags']} | concepts={result.get('concepts', [])}")
+                        print(f"  Summary: {sid[:8]} — {result['tags']} | projects={result.get('projects', [])}")
                     time_mod.sleep(1)  # rate limit
             except Exception as e:
                 print(f"  Summary-Fehler: {e}")
