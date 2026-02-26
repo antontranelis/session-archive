@@ -1947,15 +1947,7 @@ def render_graph_page():
     let links = graphData.links;
 
     if (activeTypes !== null) {{
-      const primaryIds = new Set(nodes.filter(n => activeTypes.has(n.type)).map(n => n.id));
-      const connectedIds = new Set(primaryIds);
-      links.forEach(l => {{
-        const src = typeof l.source === 'object' ? l.source.id : l.source;
-        const tgt = typeof l.target === 'object' ? l.target.id : l.target;
-        if (primaryIds.has(src)) connectedIds.add(tgt);
-        if (primaryIds.has(tgt)) connectedIds.add(src);
-      }});
-      nodes = nodes.filter(n => connectedIds.has(n.id));
+      nodes = nodes.filter(n => activeTypes.has(n.type));
       const nodeIds = new Set(nodes.map(n => n.id));
       links = links.filter(l => {{
         const src = typeof l.source === 'object' ? l.source.id : l.source;
