@@ -26,6 +26,7 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
 CET = ZoneInfo("Europe/Berlin")
+MIN_MSG_COUNT = 3  # Sessions with fewer messages are skipped (warm-up/test sessions)
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, unquote
 from pathlib import Path
@@ -56,6 +57,166 @@ API_KEY = os.environ.get("ARCHIVE_API_KEY", "")
 
 # Base path prefix for reverse proxy (e.g. "/archive" when behind /archive/*)
 BASE_PATH = os.environ.get("BASE_PATH", "").rstrip("/")
+
+# --- Projekte (eigener Knotentyp im Graph) ---
+PROJECTS = {
+    "web-of-trust", "real-life-stack", "real-life-network", "money-printer",
+    "eli", "utopia-map", "yoga-vidya", "wir-sind-wertvoll", "geburtstagsfeier",
+    "session-archiv",
+}
+
+# --- Kuratiertes Tag-Set (ohne Projekte — die sind separat) ---
+# Erweitert sich nur wenn wirklich eine neue Kategorie nötig ist.
+ALLOWED_TAGS = {
+    # Technik
+    "architektur", "frontend", "deployment", "testing", "debugging",
+    "datenbank", "kryptographie", "api", "performance", "sicherheit", "design",
+    # Konzepte (ex-Concepts, jetzt als Tags)
+    "dezentralisierung", "identität", "vertrauen", "gemeinschaft",
+    "souveränität", "offline-first", "erinnerung", "messaging",
+    # Mensch & Vision
+    "persönliches", "vision", "reflexion", "beziehungen", "familie",
+    "autonomie", "heilung", "zusammenarbeit",
+    # Praxis
+    "dokumentation", "finanzierung", "strategie", "recherche", "infrastruktur",
+    # Erweitert
+    "visualisierung", "rechtliches", "ai",
+}
+
+# Mapping: alter Tag → neuer Tag (oder None = löschen)
+TAG_MIGRATION = {
+    # design
+    "responsive-design": "design", "responsives-design": "design",
+    "ui-design": "design", "ui-ux": "design", "ui-ux-design": "design",
+    "ui": "design", "ui-components": "design", "ui-layout": "design",
+    "grid-layout": "design", "template-system": "design",
+    "design-produktion": "design", "design-und-produktion": "design",
+    "farb-management": "design", "image-processing": "design",
+    "branding": "design", "web-presence": "design", "web-projekt": "design",
+    # gemeinschaft
+    "community": "gemeinschaft", "gesellschaft": "gemeinschaft",
+    # visualisierung
+    "visualization": "visualisierung", "netzwerk-darstellung": "visualisierung",
+    "graphen-analyse": "visualisierung", "dashboard": "visualisierung",
+    # reflexion
+    "reflection": "reflexion", "selbstreflexion": "reflexion",
+    "ego-reflexion": "reflexion", "ego-selbsterkenntnis": "reflexion",
+    # finanzierung
+    "funding": "finanzierung", "funding-grants": "finanzierung",
+    "geld-und-wirtschaft": "finanzierung", "cost-optimization": "finanzierung",
+    # datenbank
+    "datei-verwaltung": "datenbank", "dateimanagement": "datenbank",
+    "datenverwaltung": "datenbank", "speicher-verwaltung": "datenbank",
+    "speicherung": "datenbank", "storage": "datenbank", "web-storage": "datenbank",
+    "persistenz": "datenbank", "persistierung": "datenbank",
+    "daten-migration": "datenbank", "datenmigration": "datenbank",
+    "datenbereinigung": "datenbank", "vektordatenbank": "datenbank",
+    "vektordatenbanken": "datenbank", "clustering": "datenbank",
+    # sicherheit
+    "zugriff-kontrolle": "sicherheit", "zugriffskontrolle": "sicherheit",
+    "access-control": "sicherheit", "datenschutz": "sicherheit",
+    "authentifizierung": "sicherheit", "verifikation": "sicherheit",
+    # infrastructure
+    "infrastructure": "infrastruktur", "server-konfiguration": "infrastruktur",
+    "hardware": "infrastruktur", "whisper": "infrastruktur",
+    # money-printer
+    "money-printing": "money-printer", "geld-druck": "money-printer", "druck": "money-printer",
+    # autonomie
+    "autonomie-und-eigenstaendigkeit": "autonomie",
+    # erinnerung
+    "erinnerungen": "erinnerung", "memory-management": "erinnerung",
+    "memory-system": "erinnerung", "archiv": "erinnerung",
+    "archivierung": "erinnerung", "archiv-system": "erinnerung",
+    # debugging
+    "bug-fixes": "debugging", "bug-fixing": "debugging",
+    "troubleshooting": "debugging", "fehlerbehandlung": "debugging",
+    # persönliches
+    "körperpflege": "persönliches", "wellness": "persönliches",
+    "schmerzen": "persönliches", "gesundheit": "persönliches",
+    "schweiz": "persönliches", "alltäglich": "persönliches",
+    "arbeitsbereich": "persönliches", "desktop-verwaltung": "persönliches",
+    # rechtliches
+    "rechtlich": "rechtliches", "rechtsformen": "rechtliches",
+    "lizenzierung": "rechtliches", "gemeinnützigkeit": "rechtliches",
+    # identität
+    "profil-management": "identität", "profil-verwaltung": "identität",
+    # dezentralisierung
+    "netzwerk": "dezentralisierung", "networking": "dezentralisierung",
+    "netzwerk-design": "dezentralisierung", "peer-to-peer": "dezentralisierung",
+    "blockchain": "dezentralisierung", "dezentral": "dezentralisierung",
+    # zusammenarbeit
+    "kollaboration": "zusammenarbeit", "kooperation": "zusammenarbeit",
+    "kommunikation": "zusammenarbeit",
+    # architektur
+    "modul-entwicklung": "architektur", "modul-system": "architektur",
+    "frontend-architektur": "architektur", "datenmodellierung": "architektur",
+    "datenstruktur": "architektur",
+    # frontend
+    "demo-app": "frontend", "prototyping": "frontend", "landingpage": "frontend",
+    # eli
+    "remote-mcp": "eli", "mcp": "eli",
+    # offline-first
+    "synchronisierung": "offline-first", "lokale-erste": "offline-first",
+    # ai
+    "prompt-engineering": "ai", "ai-ethik": "ai", "ai-frameworks": "ai",
+    "ai-integration": "ai", "ai-tools": "ai", "ki-beratung": "ai",
+    "maschinelles-lernen": "ai", "gemini-api": "ai",
+    # strategie
+    "marktforschung": "strategie", "geschäftsentwicklung": "strategie",
+    "karriere-entwicklung": "strategie", "freelancing": "strategie",
+    "governance": "strategie", "it-governance": "strategie",
+    # utopia-map
+    "geo-daten": "utopia-map", "geographie": "utopia-map",
+    # vision
+    "nachhaltigkeit": "vision", "philosophie": "vision",
+    # testing
+    "qualitätssicherung": "testing", "linting": "testing",
+    "code-qualität": "testing", "code-review": "testing", "refactoring": "testing",
+    # api
+    "api-integration": "api",
+    # entfernen (zu generisch oder irrelevant)
+    "development": None, "entwicklung": None, "web-development": None,
+    "web-entwicklung": None, "app-entwicklung": None,
+    "projekt-management": None, "projekt-planung": None,
+    "projekt-setup": None, "projektsetup": None, "projekt-verwaltung": None,
+    "projekt-analyse": None, "organisationsstruktur": None, "organisatorisches": None,
+    "pdf-verarbeitung": None, "pdf-processing": None, "text-processing": None,
+    "text-verarbeitung": None, "directus": None,
+    "open-source": None, "versionskontrolle": None,
+    "suche": None, "datei-suche": None,
+    "i18n": None, "routing": None, "react": None, "state-management": None,
+    "rendering": None, "initialisierung": None, "konfiguration": None,
+    "limitations": None, "analyse": None, "anforderungen": None,
+    "anfragen-verhalten": None, "feature-implementation": None,
+    "development-workflow": None, "kostenkontrolle": None,
+    "kostenverwaltung": None, "resource-management": None,
+    "workspace-management": None, "repository": None, "repository-struktur": None,
+    "integration": None, "automatisierung": None, "3d-grafik": None,
+    "daten-analyse": None,
+}
+
+
+def normalize_tags(tags: list[str]) -> tuple[list[str], list[str]]:
+    """Map raw tags to curated set. Returns (tags, projects) separately."""
+    tag_result = set()
+    project_result = set()
+    for tag in tags:
+        tag = tag.lower().strip()
+        if tag in TAG_MIGRATION:
+            mapped = TAG_MIGRATION[tag]
+            if mapped:
+                if mapped in PROJECTS:
+                    project_result.add(mapped)
+                else:
+                    tag_result.add(mapped)
+        elif tag in PROJECTS:
+            project_result.add(tag)
+        elif tag in ALLOWED_TAGS:
+            tag_result.add(tag)
+        else:
+            # Unknown — keep as tag (the set can grow if it makes sense)
+            tag_result.add(tag)
+    return sorted(tag_result), sorted(project_result)
 
 # Chroma connection (same server as Eli's memories)
 CHROMA_HOST = os.environ.get("CHROMA_HOST", "localhost")
@@ -113,10 +274,18 @@ def sync_to_neo4j(db):
         ).fetchall()
 
     print(f"  Neo4j sync: {len(sessions)} Sessions...")
+    session_ids = {s[0] for s in sessions}
 
     with neo4j_driver.session() as neo_session:
-        # Create constraints for new node types
-        for label in ["Concept", "Decision", "Question"]:
+        # Remove sessions from Neo4j that are no longer in SQLite (e.g. warm-ups)
+        neo_sids = [r["id"] for r in neo_session.run("MATCH (s:Session) RETURN s.id as id").data()]
+        stale = [sid for sid in neo_sids if sid not in session_ids]
+        if stale:
+            neo_session.run("MATCH (s:Session) WHERE s.id IN $ids DETACH DELETE s", ids=stale)
+            print(f"  Neo4j: {len(stale)} veraltete Sessions entfernt")
+
+        # Create constraints for node types
+        for label in ["Project", "Question"]:
             try:
                 neo_session.run(f"CREATE CONSTRAINT IF NOT EXISTS FOR (n:{label}) REQUIRE n.name IS UNIQUE")
             except Exception:
@@ -156,39 +325,23 @@ def sync_to_neo4j(db):
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-            # 3b. Graph data: Concepts, Decisions, Questions, Mentions
+            # 3b. Graph data: Projects, Mentions
             if graph_data_json:
                 try:
                     gd = json.loads(graph_data_json)
 
-                    # Concept nodes + :DISCUSSES edges
-                    for concept in gd.get("concepts", []):
-                        neo_session.run("""
-                            MERGE (c:Concept {name: $name})
-                            WITH c
-                            MATCH (s:Session {id: $sid})
-                            MERGE (s)-[:DISCUSSES]->(c)
-                        """, name=concept.lower().strip(), sid=sid)
-
-                    # Decision nodes + :LED_TO edges
-                    for decision in gd.get("decisions", []):
-                        if decision.strip():
+                    # Project nodes + :BELONGS_TO edges
+                    for project in gd.get("projects", []):
+                        pname = project.lower().strip()
+                        if pname in PROJECTS:
                             neo_session.run("""
-                                MERGE (d:Decision {name: $name})
-                                WITH d
+                                MERGE (p:Project {name: $name})
+                                WITH p
                                 MATCH (s:Session {id: $sid})
-                                MERGE (s)-[:LED_TO]->(d)
-                            """, name=decision.strip()[:200], sid=sid)
+                                MERGE (s)-[:BELONGS_TO]->(p)
+                            """, name=pname, sid=sid)
 
-                    # Question nodes + :RAISED edges
-                    for question in gd.get("questions", []):
-                        if question.strip():
-                            neo_session.run("""
-                                MERGE (q:Question {name: $name})
-                                WITH q
-                                MATCH (s:Session {id: $sid})
-                                MERGE (s)-[:RAISED]->(q)
-                            """, name=question.strip()[:200], sid=sid)
+                    # Question nodes are curated manually (not auto-generated)
 
                     # :MENTIONS edges to existing Person nodes
                     for person in gd.get("mentions", []):
@@ -248,11 +401,10 @@ def sync_to_neo4j(db):
 
 
 def get_graph_data():
-    """Get nodes + edges from Neo4j for D3 visualization (new schema v2)."""
+    """Get nodes + edges from Neo4j for D3 visualization (schema v2 — no Session nodes)."""
     if not neo4j_driver:
         return {"nodes": [], "links": []}
 
-    # New node types in the knowledge graph
     KNOWN_LABELS = {
         "Person", "Projekt", "Thema", "Organisation",
         "Aufgabe", "Erkenntnis", "Entscheidung", "Meilenstein",
@@ -287,7 +439,6 @@ def get_graph_data():
                 "type": label,
                 "name": props.get("name", "?"),
             }
-            # Optional fields for detail panel
             if props.get("beschreibung"):
                 node["beschreibung"] = props["beschreibung"]
             if props.get("status"):
@@ -297,7 +448,6 @@ def get_graph_data():
             if props.get("sessions"):
                 node["sessions"] = props["sessions"]
             if props.get("msg_refs"):
-                # msg_refs stored as JSON string in Neo4j
                 mr = props["msg_refs"]
                 if isinstance(mr, str):
                     try:
@@ -329,16 +479,44 @@ def get_graph_data():
     return {"nodes": nodes, "links": links}
 
 
+def get_node_memories(neo_id):
+    """Get all Memory nodes connected to a given node, with full text."""
+    if not neo4j_driver:
+        return []
+
+    memories = []
+    with neo4j_driver.session() as session:
+        result = session.run("""
+            MATCH (n)-[r]-(m:Memory)
+            WHERE id(n) = $neo_id
+            RETURN m.text as text, m.short as short, m.typ as typ, m.datum as datum,
+                   m.source as source, m.thema as thema, m.bedeutung as bedeutung,
+                   type(r) as rel_type
+            ORDER BY m.datum DESC, m.typ
+        """, neo_id=neo_id)
+        for record in result:
+            memories.append({
+                "text": record["text"] or record["short"] or "",
+                "typ": record["typ"] or "",
+                "datum": record["datum"] or "",
+                "source": record["source"] or "",
+                "thema": record["thema"] or "",
+                "bedeutung": record["bedeutung"] or "",
+                "rel": record["rel_type"] or "",
+            })
+    return memories
+
+
 def graph_query(query_type: str, params: dict) -> dict:
     """Execute predefined graph queries against Neo4j (schema v2).
 
     Supported query_type values:
-      bridges       — themes/concepts shared between anton and timo (via sessions property)
+      bridges       — themes shared between sessions (high session count)
       neighbors     — all neighbors of a given node (by name + type)
       path          — shortest path between two nodes
       concepts      — all Thema nodes with session counts
       decisions     — all Entscheidung nodes
-      questions     — all Herausforderung/Spannung nodes (open issues)
+      questions     — all Herausforderung/Spannung nodes
       person        — everything connected to a person
       stats         — graph statistics
     """
@@ -347,9 +525,6 @@ def graph_query(query_type: str, params: dict) -> dict:
 
     with neo4j_driver.session() as s:
         if query_type == "bridges":
-            # Themen/Konzepte die Anton und Timo verbinden
-            # In new schema: sessions property on Thema nodes contains session IDs
-            # We detect sessions by matching prefix patterns or use HAT_THEMA edges
             result = s.run("""
                 MATCH (t:Thema)
                 WHERE t.sessions IS NOT NULL AND size(t.sessions) >= 2
@@ -410,7 +585,6 @@ def graph_query(query_type: str, params: dict) -> dict:
             return {"query": "path", "from": from_name, "to": to_name, "path": [], "rels": []}
 
         elif query_type == "concepts":
-            # Thema nodes with session count
             result = s.run("""
                 MATCH (t:Thema)
                 RETURN t.name AS thema,
@@ -422,7 +596,6 @@ def graph_query(query_type: str, params: dict) -> dict:
             return {"query": "concepts", "results": rows}
 
         elif query_type == "decisions":
-            # Entscheidung nodes
             result = s.run("""
                 MATCH (d:Entscheidung)
                 RETURN d.name AS name, d.beschreibung AS beschreibung,
@@ -441,7 +614,6 @@ def graph_query(query_type: str, params: dict) -> dict:
             return {"query": "decisions", "results": rows}
 
         elif query_type == "questions":
-            # Herausforderungen + Spannungen (open issues)
             result = s.run("""
                 MATCH (n)
                 WHERE (n:Herausforderung OR n:Spannung) AND n.status IN ['offen', null, '']
@@ -461,7 +633,6 @@ def graph_query(query_type: str, params: dict) -> dict:
 
         elif query_type == "person":
             name = params.get("name", "")
-            # Items this person is responsible for (VERANTWORTLICH edge)
             result_verant = s.run("""
                 MATCH (p:Person {name: $name})<-[:VERANTWORTLICH]-(n)
                 RETURN labels(n)[0] AS type, n.name AS name,
@@ -477,7 +648,6 @@ def graph_query(query_type: str, params: dict) -> dict:
                 "projekt": r["projekt"] or "",
             } for r in result_verant]
 
-            # Projects this person works on (ARBEITET_AN edge)
             result_proj = s.run("""
                 MATCH (p:Person {name: $name})-[:ARBEITET_AN]->(proj:Projekt)
                 RETURN proj.name AS projekt
@@ -485,7 +655,6 @@ def graph_query(query_type: str, params: dict) -> dict:
             """, name=name)
             projects = [r["projekt"] for r in result_proj]
 
-            # Person's beschreibung
             result_info = s.run("""
                 MATCH (p:Person {name: $name})
                 RETURN p.beschreibung AS beschreibung, p.rolle AS rolle
@@ -646,7 +815,10 @@ def init_db():
     try:
         db.execute("SELECT graph_data FROM sessions LIMIT 1")
     except sqlite3.OperationalError:
-        db.execute("ALTER TABLE sessions ADD COLUMN graph_data TEXT")  # JSON: concepts, decisions, questions, mentions
+        db.execute("ALTER TABLE sessions ADD COLUMN graph_data TEXT")  # JSON: projects, decisions, mentions
+    # Fix HTML entities in titles (e.g. &uuml; → ü)
+    for sid, title in db.execute("SELECT id, title FROM sessions WHERE title LIKE '%&%;%'").fetchall():
+        db.execute("UPDATE sessions SET title = ? WHERE id = ?", (html_mod.unescape(title), sid))
     db.commit()
     return db
 
@@ -690,24 +862,19 @@ Die Nachrichten sind gleichmäßig über die gesamte Session verteilt (Anfang, M
 
 Gib zurück:
 1. "summary": Zusammenfassung in 1-3 Sätzen auf Deutsch. Wichtigste Themen und Ergebnisse.
-2. "tags": 3-6 übergeordnete Themen-Tags.
-3. "concepts": 1-5 übergeordnete Konzepte/Ideen, die in dieser Session eine Rolle spielen. Denke abstrakt: nicht "MessagingAdapter implementiert" sondern "messaging", "dezentralisierung". Lowercase, Deutsch.
-4. "decisions": 0-3 konkrete Entscheidungen die getroffen wurden. Kurze Sätze. Nur echte Entscheidungen, nicht "wir haben X besprochen". Leeres Array wenn keine.
-5. "questions": 0-3 offene Fragen die aufkamen und (noch) nicht beantwortet wurden. Leeres Array wenn keine.
-6. "mentions": Alle erwähnten Personen als Liste. Bekannte Namen: anton, timo, eli, sebastian, tillmann, mathias. Nur lowercase Vornamen. Leeres Array wenn keine.
+2. "projects": 1-2 Projekte denen diese Session zugehört. Wähle AUS DIESER LISTE: {', '.join(sorted(PROJECTS))}. Wenn keines passt, leeres Array.
+3. "tags": 2-5 übergeordnete Themen-Tags (KEINE Projekte, die sind separat!).
+4. "mentions": Alle erwähnten Personen als Liste. Bekannte Namen: anton, timo, eli, sebastian, tillmann, mathias. Nur lowercase Vornamen. Leeres Array wenn keine.
 
 Tag-Regeln:
+- Wähle Tags AUS DIESER LISTE (bevorzugt!): {', '.join(sorted(ALLOWED_TAGS))}
+- Nur wenn KEINER dieser Tags passt, darfst du einen neuen vorschlagen — aber nur übergeordnete Kategorien, nie spezifische Tools/Libraries
 - Kleingeschrieben, Bindestriche statt Leerzeichen
-- RICHTIG: "web-of-trust", "infrastruktur", "persönliches", "architektur", "design", "eli", "deployment", "testing", "kryptographie", "real-life-network"
 - FALSCH: "ms-sql-zugriff", "html-entities", "forgejo-self-hosted", "nginx-config" (zu spezifisch!)
-
-Concept-Regeln:
-- Abstrakte Ideen, nicht Implementierungsdetails
-- RICHTIG: "vertrauen", "identität", "dezentralisierung", "offline-first", "gemeinschaft", "souveränität", "heilung", "e2e-verschlüsselung"
-- FALSCH: "evolu-bug", "docker-container", "css-fix"
+- FALSCH als Tag: "web-of-trust", "eli", "money-printer" (das sind Projekte, keine Tags!)
 
 Antworte NUR mit validem JSON, kein anderer Text.
-Beispiel: {{"summary": "WoT Demo-App Tests aufgesetzt.", "tags": ["web-of-trust", "testing"], "concepts": ["vertrauen", "dezentralisierung"], "decisions": ["did:key als DID-Methode gewählt"], "questions": ["Wie lösen wir Offline-Discovery?"], "mentions": ["anton", "timo"]}}
+Beispiel: {{"summary": "WoT Demo-App Tests aufgesetzt.", "projects": ["web-of-trust"], "tags": ["testing", "kryptographie"], "mentions": ["anton", "timo"]}}
 
 Gespräch:
 {transcript}"""
@@ -734,12 +901,13 @@ Gespräch:
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         parsed = json.loads(text)
+        # Normalize: split tags and projects, merge any project-named tags into projects
+        all_tags = parsed.get("tags", []) + parsed.get("projects", [])
+        tags, projects = normalize_tags(all_tags)
         return {
             "summary": parsed.get("summary", ""),
-            "tags": parsed.get("tags", []),
-            "concepts": parsed.get("concepts", []),
-            "decisions": parsed.get("decisions", []),
-            "questions": parsed.get("questions", []),
+            "tags": tags,
+            "projects": projects,
             "mentions": parsed.get("mentions", []),
         }
     except Exception as e:
@@ -816,7 +984,7 @@ def _index_sessions_locked(db: sqlite3.Connection):
                     role = msg.get("role", msg_type)
                 messages.append({"role": role, "text": text, "timestamp": ts})
 
-        if len(messages) < 2:
+        if len(messages) < MIN_MSG_COUNT:
             continue
 
         # Title = first meaningful user message
@@ -825,7 +993,7 @@ def _index_sessions_locked(db: sqlite3.Connection):
             if m["role"] in ("user", "human"):
                 clean = m["text"].strip()
                 if clean and len(clean) > 3:
-                    title = clean[:120]
+                    title = html_mod.unescape(clean[:120])
                     break
         if not title:
             title = f"Session {session_id[:8]}"
@@ -915,6 +1083,27 @@ def _index_sessions_locked(db: sqlite3.Connection):
                 "date": date_str,
                 "title": title[:80],
             })
+
+    # Remove sessions below MIN_MSG_COUNT (warm-up/test sessions)
+    warmup_ids = [r[0] for r in db.execute(
+        "SELECT id FROM sessions WHERE msg_count < ?", (MIN_MSG_COUNT,)).fetchall()]
+    if warmup_ids:
+        placeholders = ",".join("?" * len(warmup_ids))
+        db.execute(f"DELETE FROM messages WHERE session_id IN ({placeholders})", warmup_ids)
+        db.execute(f"DELETE FROM sessions WHERE id IN ({placeholders})", warmup_ids)
+        print(f"  Warm-up Sessions entfernt: {len(warmup_ids)} (< {MIN_MSG_COUNT} Nachrichten)")
+        # Remove from Chroma
+        if chroma_collection:
+            chroma_del_ids = []
+            for sid in warmup_ids:
+                chroma_del_ids.append(f"{sid}:summary")
+                # Message chunks use {sid}:{index}
+                for i in range(50):
+                    chroma_del_ids.append(f"{sid}:{i}")
+            try:
+                chroma_collection.delete(ids=chroma_del_ids)
+            except Exception:
+                pass  # IDs that don't exist are silently ignored
 
     db.commit()
 
@@ -1675,7 +1864,6 @@ def render_graph_page():
 <script>
 (function() {{
   const BASE = "{BASE_PATH}";
-  const ARCHIVE_BASE = BASE + "/archive";
   const tooltip = document.getElementById('tooltip');
   const loading = document.getElementById('loading');
   const detailPanel = document.getElementById('detail-panel');
@@ -1709,13 +1897,11 @@ def render_graph_page():
     HAT_THEMA: 'hat Thema',
   }};
 
-  // Node sizes by type
   const typeSizes = {{
     Person: 14, Projekt: 18, Thema: 12, Organisation: 11,
     Aufgabe: 5, Erkenntnis: 6, Entscheidung: 7, Meilenstein: 7,
     Herausforderung: 6, Spannung: 6, Artefakt: 5,
   }};
-  // Charge (repulsion) by type
   const typeCharge = {{
     Person: -400, Projekt: -500, Thema: -300, Organisation: -250,
     Aufgabe: -80, Erkenntnis: -100, Entscheidung: -120, Meilenstein: -100,
@@ -1745,7 +1931,6 @@ def render_graph_page():
     let links = graphData.links;
 
     if (typeFilter !== 'all') {{
-      // When filtering by type, show those nodes + their direct neighbors
       const primaryIds = new Set(nodes.filter(n => n.type === typeFilter).map(n => n.id));
       const connectedIds = new Set(primaryIds);
       links.forEach(l => {{
@@ -1794,7 +1979,6 @@ def render_graph_page():
   }}
 
   function buildMsgRefLinks(msgRefs) {{
-    // msgRefs: {{ "session_id": [idx1, idx2, ...], ... }}
     if (!msgRefs || typeof msgRefs !== 'object') return '';
     let html = '<div style="margin-top:0.3rem;display:flex;flex-wrap:wrap;gap:2px;">';
     for (const [sid, indices] of Object.entries(msgRefs)) {{
@@ -1819,12 +2003,9 @@ def render_graph_page():
     let html = `<div class="detail-type" style="background:${{color}}33;color:${{color}}">${{typeLabels[d.type] || d.type}}</div>`;
     html += `<div class="detail-name">${{escHtml(d.name)}}</div>`;
 
-    // Description
     if (d.beschreibung) {{
       html += `<div class="detail-desc">${{escHtml(d.beschreibung)}}</div>`;
     }}
-
-    // Metadata
     if (d.projekt) {{
       html += `<div class="detail-meta">Projekt: <span>${{escHtml(d.projekt)}}</span></div>`;
     }}
@@ -1839,14 +2020,12 @@ def render_graph_page():
       html += `<div class="detail-meta">Sessions: <span>${{d.sessions.length}}</span></div>`;
     }}
 
-    // Source references (msg_refs) — click to jump to exact message
     if (d.msg_refs && Object.keys(d.msg_refs).length) {{
       html += `<div class="detail-section"><h3>Quell-Nachrichten (${{Object.keys(d.msg_refs).length}} Sessions)</h3>`;
       html += buildMsgRefLinks(d.msg_refs);
-      html += `</div>`;
+      html += '</div>';
     }} else if (d.sessions && d.sessions.length) {{
-      // Fallback: link to sessions without specific message
-      html += `<div class="detail-section"><h3>Quell-Sessions</h3>`;
+      html += '<div class="detail-section"><h3>Quell-Sessions</h3>';
       html += '<div style="margin-top:0.3rem;display:flex;flex-wrap:wrap;gap:2px;">';
       d.sessions.forEach(sid => {{
         const shortId = sid.substring(0, 8);
@@ -1855,12 +2034,10 @@ def render_graph_page():
       html += '</div></div>';
     }}
 
-    // Code reference
     if (d.code_ref) {{
       html += `<div class="detail-section"><h3>Code-Referenz</h3><div class="code-ref">${{escHtml(d.code_ref)}}</div></div>`;
     }}
 
-    // Connected nodes
     const neighbors = getNeighbors(d.id);
     const groups = {{}};
     neighbors.forEach(nb => {{
@@ -1990,7 +2167,6 @@ def render_graph_page():
         .on('end', (e, d) => {{ if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }})
       );
 
-    // Labels only for large nodes or when filtered
     const showLabels = typeFilter !== 'all' || data.nodes.length < 200;
     const labelTypes = new Set(['Person', 'Projekt', 'Thema', 'Organisation',
                                  'Erkenntnis', 'Entscheidung', 'Meilenstein']);
@@ -2089,7 +2265,6 @@ def render_graph_page():
 }})();
 </script>
 </body></html>"""
-
 
 def render_index(db, query=None, semantic=False, user_filter=None):
     sessions = get_all_sessions_from_db(db, user_filter)
@@ -2303,12 +2478,12 @@ def render_session_page(db, session_id):
     # Tags + Summary for session header
     session_meta_extra = ""
     if summary:
-        session_meta_extra += f'<div class="session-summary" style="margin-top:0.5rem;">{html_mod.escape(summary)}</div>'
+        session_meta_extra += f'<div class="session-summary" style="margin-top:0.5rem; font-style:italic; opacity:0.8;">{html_mod.escape(summary)}</div>'
     if tags_json:
         try:
             tags = json.loads(tags_json)
             tags_html = " ".join(f'<a href="{BASE_PATH}/?q={html_mod.escape(t)}" class="tag">{html_mod.escape(t)}</a>' for t in tags)
-            session_meta_extra += f'<div class="session-tags" style="margin-top:0.3rem;">{tags_html}</div>'
+            session_meta_extra += f'<div class="session-tags" style="margin-top:0.3rem; margin-bottom:1.5rem;">{tags_html}</div>'
         except (json.JSONDecodeError, TypeError):
             pass
 
@@ -2445,6 +2620,11 @@ class ArchiveHandler(BaseHTTPRequestHandler):
             data = get_graph_data()
             self.respond(200, json.dumps(data, ensure_ascii=False), content_type="application/json; charset=utf-8")
 
+        elif path == "/api/graph/memories":
+            neo_id = int(params.get("neo_id", ["0"])[0])
+            data = get_node_memories(neo_id)
+            self.respond(200, json.dumps(data, ensure_ascii=False), content_type="application/json; charset=utf-8")
+
         elif path == "/api/graph/query":
             qt = params.get("type", [""])[0]
             # Pass all other params to graph_query
@@ -2558,9 +2738,7 @@ def main():
                     if result:
                         tags_json = json.dumps(result["tags"], ensure_ascii=False)
                         graph_json = json.dumps({
-                            "concepts": result.get("concepts", []),
-                            "decisions": result.get("decisions", []),
-                            "questions": result.get("questions", []),
+                            "projects": result.get("projects", []),
                             "mentions": result.get("mentions", []),
                         }, ensure_ascii=False)
                         with db_lock:
@@ -2569,7 +2747,7 @@ def main():
                                 (result["summary"], tags_json, graph_json, sid),
                             )
                             db.commit()
-                        print(f"  Summary: {sid[:8]} — {result['tags']} | concepts={result.get('concepts', [])}")
+                        print(f"  Summary: {sid[:8]} — {result['tags']} | projects={result.get('projects', [])}")
                     time_mod.sleep(1)  # rate limit
             except Exception as e:
                 print(f"  Summary-Fehler: {e}")
