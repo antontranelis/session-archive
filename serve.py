@@ -1856,6 +1856,8 @@ def render_graph_page():
     <button class="active" data-edge="VERANTWORTLICH">Verantw.</button>
     <button class="active" data-edge="VON">Von</button>
     <button class="active" data-edge="HAT_THEMA">Thema</button>
+    <button class="active" data-edge="ZWISCHEN">Zwischen</button>
+    <button class="active" data-edge="KENNT">Kennt</button>
   </div>
 </div>
 
@@ -1903,11 +1905,12 @@ def render_graph_page():
     IN_PROJEKT: '#007acc44', GEHOERT_ZU: '#569cd644', BETRIFFT: '#c586c044',
     VERANTWORTLICH: '#6a995544', VON: '#ce917844',
     ARBEITET_AN: '#6a995522', HAT_THEMA: '#569cd622',
+    ZWISCHEN: '#ff8c0077', KENNT: '#6a995577',
   }};
   const edgeLabels = {{
     IN_PROJEKT: 'in Projekt', GEHOERT_ZU: 'gehört zu', BETRIFFT: 'betrifft',
     VERANTWORTLICH: 'verantwortlich', VON: 'von', ARBEITET_AN: 'arbeitet an',
-    HAT_THEMA: 'hat Thema',
+    HAT_THEMA: 'hat Thema', ZWISCHEN: 'zwischen', KENNT: 'kennt',
   }};
 
   const typeSizes = {{
