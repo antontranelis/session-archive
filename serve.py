@@ -1988,7 +1988,14 @@ def render_graph_page():
         if (n) neighbors.push({{ node: n, edge: l.type, dir: 'in' }});
       }}
     }});
-    return neighbors;
+    // Deduplicate: same neighbor node + same edge type → keep one
+    const seen = new Set();
+    return neighbors.filter(nb => {{
+      const key = `${{nb.node.id}}:${{nb.edge}}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }});
   }}
 
   // msg_refs = [5, 28]  (list of 0-based message indices within the session)
