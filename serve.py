@@ -400,6 +400,12 @@ def sync_to_neo4j(db):
         print(f"  Neo4j sync fertig: {node_count} Knoten, {rel_count} Kanten")
 
 
+def _build_session_id_map(db):
+    """Build a mapping from 8-char short IDs to full UUIDs."""
+    rows = db.execute("SELECT id FROM sessions").fetchall()
+    return {r[0][:8]: r[0] for r in rows}
+
+
 def get_graph_data():
     """Get nodes + edges from Neo4j for D3 visualization (schema v2 — no Session nodes)."""
     if not neo4j_driver:
@@ -413,6 +419,12 @@ def get_graph_data():
 
     nodes = []
     links = []
+
+    # Build short_id → full UUID map from SQLite
+    with db_lock:
+        _tmp_db = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+        sid_map = _build_session_id_map(_tmp_db)
+        _tmp_db.close()
 
     with neo4j_driver.session() as session:
         result = session.run("""
@@ -446,7 +458,10 @@ def get_graph_data():
             if props.get("projekt"):
                 node["projekt"] = props["projekt"]
             if props.get("sessions"):
-                node["sessions"] = props["sessions"]
+                # Expand 8-char short IDs to full UUIDs
+                node["sessions"] = [
+                    sid_map.get(s, s) for s in props["sessions"]
+                ]
             if props.get("msg_refs"):
                 mr = props["msg_refs"]
                 if isinstance(mr, str):
