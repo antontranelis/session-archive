@@ -1957,13 +1957,15 @@ def render_graph_page():
     }}
 
     if (activeEdges !== null) {{
+      // Only filter edges — nodes stay visible regardless of edge filter
       links = links.filter(l => activeEdges.has(l.type));
-      const linked = new Set();
-      links.forEach(l => {{
-        linked.add(typeof l.source === 'object' ? l.source.id : l.source);
-        linked.add(typeof l.target === 'object' ? l.target.id : l.target);
+      // Still remove edges whose endpoints were removed by the node filter
+      const nodeIds = new Set(nodes.map(n => n.id));
+      links = links.filter(l => {{
+        const src = typeof l.source === 'object' ? l.source.id : l.source;
+        const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+        return nodeIds.has(src) && nodeIds.has(tgt);
       }});
-      nodes = nodes.filter(n => linked.has(n.id));
     }}
 
     return {{ nodes: JSON.parse(JSON.stringify(nodes)), links: JSON.parse(JSON.stringify(links)) }};
