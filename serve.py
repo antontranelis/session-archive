@@ -332,15 +332,7 @@ def sync_to_neo4j(db):
                                 MERGE (s)-[:LED_TO]->(d)
                             """, name=decision.strip()[:200], sid=sid)
 
-                    # Question nodes + :RAISED edges
-                    for question in gd.get("questions", []):
-                        if question.strip():
-                            neo_session.run("""
-                                MERGE (q:Question {name: $name})
-                                WITH q
-                                MATCH (s:Session {id: $sid})
-                                MERGE (s)-[:RAISED]->(q)
-                            """, name=question.strip()[:200], sid=sid)
+                    # Question nodes are curated manually (not auto-generated)
 
                     # :MENTIONS edges to existing Person nodes
                     for person in gd.get("mentions", []):
@@ -501,7 +493,7 @@ def graph_query(query_type: str, params: dict) -> dict:
       path          — shortest path between two nodes
       projects      — all projects, optionally filtered by user
       decisions     — all decisions, optionally filtered by user
-      questions     — all open questions
+      questions     — curated open points (manually maintained)
       person        — everything connected to a person
       stats         — graph statistics
     """
@@ -626,12 +618,14 @@ def graph_query(query_type: str, params: dict) -> dict:
 
         elif query_type == "questions":
             result = s.run("""
-                MATCH (q:Question)<-[:RAISED]-(s:Session)
-                RETURN q.name AS question, s.first_ts AS date, s.user_id AS user_id
-                ORDER BY s.first_ts DESC
-                LIMIT 30
+                MATCH (q:Question)
+                OPTIONAL MATCH (q)-[:ABOUT]->(p:Project)
+                RETURN q.name AS question, q.status AS status,
+                       q.project AS project, p.name AS project_node
+                ORDER BY q.status, q.name
             """)
-            rows = [{"question": r["question"], "date": r["date"] or "", "user": r["user_id"] or ""} for r in result]
+            rows = [{"question": r["question"], "status": r["status"] or "open",
+                     "project": r["project_node"] or r["project"] or ""} for r in result]
             return {"query": "questions", "results": rows}
 
         elif query_type == "person":
@@ -814,7 +808,7 @@ def init_db():
     try:
         db.execute("SELECT graph_data FROM sessions LIMIT 1")
     except sqlite3.OperationalError:
-        db.execute("ALTER TABLE sessions ADD COLUMN graph_data TEXT")  # JSON: concepts, decisions, questions, mentions
+        db.execute("ALTER TABLE sessions ADD COLUMN graph_data TEXT")  # JSON: projects, decisions, mentions
     db.commit()
     return db
 
@@ -861,8 +855,7 @@ Gib zurück:
 2. "projects": 1-2 Projekte denen diese Session zugehört. Wähle AUS DIESER LISTE: {', '.join(sorted(PROJECTS))}. Wenn keines passt, leeres Array.
 3. "tags": 2-5 übergeordnete Themen-Tags (KEINE Projekte, die sind separat!).
 4. "decisions": 0-3 konkrete Entscheidungen die getroffen wurden. Kurze Sätze. Nur echte Entscheidungen, nicht "wir haben X besprochen". Leeres Array wenn keine.
-5. "questions": 0-3 offene Fragen die aufkamen und (noch) nicht beantwortet wurden. Leeres Array wenn keine.
-6. "mentions": Alle erwähnten Personen als Liste. Bekannte Namen: anton, timo, eli, sebastian, tillmann, mathias. Nur lowercase Vornamen. Leeres Array wenn keine.
+5. "mentions": Alle erwähnten Personen als Liste. Bekannte Namen: anton, timo, eli, sebastian, tillmann, mathias. Nur lowercase Vornamen. Leeres Array wenn keine.
 
 Tag-Regeln:
 - Wähle Tags AUS DIESER LISTE (bevorzugt!): {', '.join(sorted(ALLOWED_TAGS))}
@@ -872,7 +865,7 @@ Tag-Regeln:
 - FALSCH als Tag: "web-of-trust", "eli", "money-printer" (das sind Projekte, keine Tags!)
 
 Antworte NUR mit validem JSON, kein anderer Text.
-Beispiel: {{"summary": "WoT Demo-App Tests aufgesetzt.", "projects": ["web-of-trust"], "tags": ["testing", "kryptographie"], "decisions": ["did:key als DID-Methode gewählt"], "questions": ["Wie lösen wir Offline-Discovery?"], "mentions": ["anton", "timo"]}}
+Beispiel: {{"summary": "WoT Demo-App Tests aufgesetzt.", "projects": ["web-of-trust"], "tags": ["testing", "kryptographie"], "decisions": ["did:key als DID-Methode gewählt"], "mentions": ["anton", "timo"]}}
 
 Gespräch:
 {transcript}"""
@@ -907,7 +900,6 @@ Gespräch:
             "tags": tags,
             "projects": projects,
             "decisions": parsed.get("decisions", []),
-            "questions": parsed.get("questions", []),
             "mentions": parsed.get("mentions", []),
         }
     except Exception as e:
@@ -1838,7 +1830,7 @@ def render_graph_page():
   }};
   const typeLabels = {{
     Session: 'Session', Tag: 'Tag', Person: 'Person',
-    Project: 'Projekt', Decision: 'Entscheidung', Question: 'Offene Frage',
+    Project: 'Projekt', Decision: 'Entscheidung', Question: 'Offener Punkt',
   }};
   const edgeLabels = {{
     TAGGED: 'getaggt', BY: 'von', FOLLOWS: 'danach', SIMILAR: 'ähnlich',
@@ -2190,7 +2182,7 @@ def render_graph_page():
       if (counts.Project) parts.push(counts.Project + ' Projekte');
       if (counts.Tag) parts.push(counts.Tag + ' Tags');
       if (counts.Decision) parts.push(counts.Decision + ' Entsch.');
-      if (counts.Question) parts.push(counts.Question + ' Fragen');
+      if (counts.Question) parts.push(counts.Question + ' Offene Punkte');
       if (counts.Person) parts.push(counts.Person + ' Personen');
       if (parts.length) html += '<div class="tt-detail">' + parts.join(' · ') + '</div>';
       html += '<div class="tt-hint">Klicken für Details</div>';
@@ -2730,7 +2722,6 @@ def main():
                         graph_json = json.dumps({
                             "projects": result.get("projects", []),
                             "decisions": result.get("decisions", []),
-                            "questions": result.get("questions", []),
                             "mentions": result.get("mentions", []),
                         }, ensure_ascii=False)
                         with db_lock:
