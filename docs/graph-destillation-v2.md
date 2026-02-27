@@ -118,6 +118,18 @@ Kanten:
 
 ---
 
+### [P1] Session-Zusammenfassungen aktualisieren
+
+**Problem:** Viele Session-Zusammenfassungen sind veraltet oder unvollständig — sie spiegeln nicht mehr den aktuellen Stand des Projekts wider.
+
+**Lösung:** Vor der nächsten Destillation alle Sessions neu zusammenfassen, insbesondere:
+
+- Sessions die wichtige Entscheidungen oder Architekturwechsel enthalten
+- Sessions wo die Zusammenfassung fehlt oder sehr kurz ist
+- Ältere Sessions die mit aktuellem Kontext neu bewertet werden sollten
+
+---
+
 ## Offene Fragen
 
 - Welche Kantentypen brauchen wir zwischen Person und Organisation? (MITGLIED_VON, BEAUFTRAGT_VON, GRUENDER_VON, FOERDERNEHMER_VON, ...)
