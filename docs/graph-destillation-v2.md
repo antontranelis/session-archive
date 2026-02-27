@@ -156,7 +156,7 @@ Betrifft: **Entscheidungen, Erkenntnisse, Aufgaben, Meilensteine, Herausforderun
 
 - Entscheidungen: wer hat sie getroffen?
 - Erkenntnisse: wer hatte sie? (teilweise via `person`-Feld, aber inkonsistent)
-- Aufgaben: gehören **nicht in den Wissensgraph** — sie sind Arbeitsspeicher für Eli und das Team, kein destilliertes Wissen. Stattdessen: offene Aufgaben mit Verantwortlichem separat in Eli's Gedächtnis / MCP speichern damit Eli ihre Rolle kennt und einnehmen kann
+- Aufgaben: gehören **nicht in den Wissensgraph** — sie leben später im Web of Trust (E2EE, mit Verantwortlichen, Status, Echtzeit-Sync). Eli liest sie von dort und kann ihre Rolle einnehmen. Kein Duplikat im Archiv.
 - Herausforderungen: wen betrifft es konkret?
 - Meilensteine: wer hat sie erreicht?
 
