@@ -250,10 +250,42 @@ def merge_type(typ, entries, budget):
             elif result:
                 all_merged.append(result)
 
-        # Zweiter Pass wenn Batches zusammengeführt wurden
-        if len(all_merged) > batch_size:
-            return all_merged  # Zu viele für einen finalen Merge
-        if len(entries) > batch_size:
+        # Rekursiver Merge bis alles in einen Batch passt
+        merge_round = 1
+        while len(all_merged) > batch_size:
+            merge_round += 1
+            print(f"\n    === Merge-Runde {merge_round}: {len(all_merged)} Einträge → {math.ceil(len(all_merged) / batch_size)} Batches ===")
+            next_merged = []
+            for i in range(0, len(all_merged), batch_size):
+                batch = all_merged[i:i + batch_size]
+                if len(batch) <= 1:
+                    next_merged.extend(batch)
+                    continue
+                prompt = build_merge_prompt(typ, batch)
+                print(f"    Runde-{merge_round} Batch {i // batch_size + 1} ({len(batch)} Einträge)...", end=" ", flush=True)
+                result, usage, cost = call_sonnet(prompt, budget)
+                in_t = usage.get("input_tokens", 0)
+                out_t = usage.get("output_tokens", 0)
+                print(f"${cost:.3f} (in:{in_t:,} out:{out_t:,})")
+                if result and isinstance(result, list):
+                    hints = [r for r in result if isinstance(r, dict) and "_duplikate_hinweis" in r]
+                    if hints:
+                        print(f"    💡 {hints}")
+                    clean = [r for r in result if not (isinstance(r, dict) and "_duplikate_hinweis" in r)]
+                    next_merged.extend(clean)
+                elif result:
+                    next_merged.append(result)
+                else:
+                    next_merged.extend(batch)  # Fallback bei Fehler
+
+            # Fortschritt prüfen — wenn kein Fortschritt, abbrechen
+            if len(next_merged) >= len(all_merged):
+                print(f"    ⚠️ Kein Fortschritt in Runde {merge_round} ({len(all_merged)} → {len(next_merged)}) — abbrechen")
+                return next_merged
+            all_merged = next_merged
+
+        # Finaler Merge wenn alles in einen Batch passt
+        if len(all_merged) > 1:
             print(f"    Finaler Merge ({len(all_merged)} Einträge)...", end=" ", flush=True)
             prompt = build_merge_prompt(typ, all_merged)
             result, usage, cost = call_sonnet(prompt, budget)
@@ -261,7 +293,10 @@ def merge_type(typ, entries, budget):
             out_t = usage.get("output_tokens", 0)
             print(f"${cost:.3f} (in:{in_t:,} out:{out_t:,})")
             if result and isinstance(result, list):
-                return result
+                hints = [r for r in result if isinstance(r, dict) and "_duplikate_hinweis" in r]
+                if hints:
+                    print(f"    💡 {hints}")
+                return [r for r in result if not (isinstance(r, dict) and "_duplikate_hinweis" in r)]
         return all_merged
 
     prompt = build_merge_prompt(typ, entries)
