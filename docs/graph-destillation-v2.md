@@ -80,11 +80,19 @@ Neue Kanten:
 
 ---
 
-### [P1] Projekte — alle Projektnamen als Knoten anlegen
+### [P1] Projekte — erweiterte Liste vorher kuratieren
 
-**Problem:** Nur 14 Projekt-Knoten, aber ~30+ Projektnamen stecken als Strings in Aufgaben, Erkenntnissen etc.
+**Problem:** Nur 14 Projekt-Knoten, aber ~30+ Projektnamen stecken als Strings in Aufgaben, Erkenntnissen etc. Außerdem sind manche Projektnamen inkonsistent (Schreibweise, Duplikate) oder veraltet.
 
-**Lösung:** Alle eindeutigen Werte aus `aufgaben.projekt`, `erkenntnisse.projekt`, etc. als Projekt-Knoten anlegen — auch wenn sie keine eigene Beschreibung haben.
+**Lösung:** Vor der Destillation die Projektliste manuell kuratieren:
+
+- Alle eindeutigen Werte aus `aufgaben.projekt`, `erkenntnisse.projekt`, `meilensteine.projekt` etc. zusammenführen
+- Duplikate und Varianten bereinigen (z.B. "web-of-trust" vs "wot" vs "Web of Trust")
+- Veraltete oder irrelevante Projekte entfernen
+- Fehlende wichtige Projekte ergänzen
+- Danach als Basis für die Destillation nutzen — das LLM soll nur aus dieser Liste wählen, keine neuen Projektnamen erfinden
+
+**Reihenfolge:** Projektliste kuratieren → Session-Zusammenfassungen aktualisieren → Destillation starten
 
 ---
 
