@@ -18,13 +18,14 @@ import math
 import os
 import re
 import sys
+import time
 import urllib.request
 import urllib.error
 from datetime import datetime
 from pathlib import Path
 
 MODEL = "claude-sonnet-4-6"
-MAX_TOKENS = 8000
+MAX_TOKENS = 16000  # Erhöht von 8000 — Erkenntnisse brauchen mehr Platz
 TIMEOUT = 300
 BUDGET_WARN = 3.0
 BUDGET_HARD_STOP = 8.0  # Eigenes Budget für Merge-Phase
@@ -46,7 +47,19 @@ MERGE_TYPES = [
 ]
 
 # Max Einträge pro Sonnet-Call (um Output-Truncation zu vermeiden)
-MAX_ENTRIES_PER_CALL = 50
+# Text-lastige Typen brauchen kleinere Batches (längere Einträge → mehr Output)
+BATCH_SIZE = {
+    "personen": 50,
+    "organisationen": 50,
+    "projekte": 50,
+    "erkenntnisse": 25,
+    "entscheidungen": 30,
+    "meilensteine": 30,
+    "herausforderungen": 30,
+    "spannungen": 30,
+    "fragen": 30,
+}
+MAX_ENTRIES_PER_CALL = 50  # Fallback
 
 
 def call_sonnet(prompt, budget):
@@ -67,14 +80,34 @@ def call_sonnet(prompt, budget):
         },
     )
 
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            result = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            print(f"\n⛔ FEHLER 404: MODEL={MODEL}")
-            sys.exit(1)
-        raise
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+                result = json.loads(resp.read().decode())
+            break
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                print(f"\n⛔ FEHLER 404: MODEL={MODEL}")
+                sys.exit(1)
+            if e.code == 529 and attempt < 2:
+                wait = 30 * (attempt + 1)
+                print(f"\n    ⏳ API überlastet (529), warte {wait}s...", end=" ", flush=True)
+                time.sleep(wait)
+                # Request neu bauen (urlopen verbraucht den alten)
+                req = urllib.request.Request(
+                    "https://api.anthropic.com/v1/messages",
+                    data=data,
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-api-key": ANTHROPIC_API_KEY,
+                        "anthropic-version": "2023-06-01",
+                    },
+                )
+                continue
+            if e.code == 529:
+                print(f"\n⛔ API überlastet (529) nach 3 Versuchen — abbrechen")
+                sys.exit(1)
+            raise
 
     text = result["content"][0]["text"].strip()
     usage = result.get("usage", {})
@@ -192,27 +225,34 @@ def merge_type(typ, entries, budget):
     if not entries:
         return []
 
+    batch_size = BATCH_SIZE.get(typ, MAX_ENTRIES_PER_CALL)
+
     # Bei sehr vielen Einträgen: in Batches aufteilen
-    if len(entries) > MAX_ENTRIES_PER_CALL:
-        print(f"    {len(entries)} Einträge → {math.ceil(len(entries) / MAX_ENTRIES_PER_CALL)} Batches")
+    if len(entries) > batch_size:
+        print(f"    {len(entries)} Einträge → {math.ceil(len(entries) / batch_size)} Batches (à {batch_size})")
         all_merged = []
-        for i in range(0, len(entries), MAX_ENTRIES_PER_CALL):
-            batch = entries[i:i + MAX_ENTRIES_PER_CALL]
+        for i in range(0, len(entries), batch_size):
+            batch = entries[i:i + batch_size]
             prompt = build_merge_prompt(typ, batch)
-            print(f"    Batch {i // MAX_ENTRIES_PER_CALL + 1} ({len(batch)} Einträge)...", end=" ", flush=True)
+            print(f"    Batch {i // batch_size + 1} ({len(batch)} Einträge)...", end=" ", flush=True)
             result, usage, cost = call_sonnet(prompt, budget)
             in_t = usage.get("input_tokens", 0)
             out_t = usage.get("output_tokens", 0)
             print(f"${cost:.3f} (in:{in_t:,} out:{out_t:,})")
             if result and isinstance(result, list):
-                all_merged.extend(result)
+                # Duplikate-Hinweise extrahieren
+                hints = [r for r in result if isinstance(r, dict) and "_duplikate_hinweis" in r]
+                if hints:
+                    print(f"    💡 {hints}")
+                clean = [r for r in result if not (isinstance(r, dict) and "_duplikate_hinweis" in r)]
+                all_merged.extend(clean)
             elif result:
                 all_merged.append(result)
 
         # Zweiter Pass wenn Batches zusammengeführt wurden
-        if len(all_merged) > MAX_ENTRIES_PER_CALL:
+        if len(all_merged) > batch_size:
             return all_merged  # Zu viele für einen finalen Merge
-        if len(entries) > MAX_ENTRIES_PER_CALL:
+        if len(entries) > batch_size:
             print(f"    Finaler Merge ({len(all_merged)} Einträge)...", end=" ", flush=True)
             prompt = build_merge_prompt(typ, all_merged)
             result, usage, cost = call_sonnet(prompt, budget)
