@@ -144,21 +144,31 @@ Das spart API-Kosten und hält beides konsistent.
 
 ---
 
-### [P1] Entscheidungen — Qualität und Personenbezug
+### [P1] Inhaltliche Knoten — Qualität und Personenbezug
 
-**Problem 1 — Qualität:** Viele Entscheidungen sind triviale Implementierungsdetails ohne Wissenswert (z.B. "Black Background für Gemini-Generierung", "Maximal 3 Farben aus Logo extrahieren"). Nur 224 Kanten, alle nur zu Projekten.
+Betrifft: **Entscheidungen, Erkenntnisse, Aufgaben, Meilensteine, Herausforderungen**
 
-**Problem 2 — Personenbezug:** Entscheidungen hängen nur an Projekten, aber nicht an den Personen die sie getroffen haben.
+**Ausnahme: Spannungen** funktionieren gut — relevanter Inhalt, haben bereits Personenbezug via `zwischen`.
+
+**Problem 1 — Qualität:** Großteils triviale Implementierungsdetails ohne Wissenswert. Beispiele aus Entscheidungen: "Black Background für Gemini-Generierung", "Maximal 3 Farben aus Logo extrahieren". Ähnliches gilt für Aufgaben, Meilensteine etc.
+
+**Problem 2 — Personenbezug:** Alle hängen nur an Projekten, nicht an den Menschen dahinter:
+
+- Entscheidungen: wer hat sie getroffen?
+- Erkenntnisse: wer hatte sie? (teilweise via `person`-Feld, aber inkonsistent)
+- Aufgaben: wer ist verantwortlich? (via `verantwortlich`, aber oft leer)
+- Herausforderungen: wen betrifft es konkret?
+- Meilensteine: wer hat sie erreicht?
 
 **Lösung:**
 
-- Im Destillations-Prompt klaren Schwellenwert setzen: nur Entscheidungen die **Architektur, Strategie, Richtung oder Werte** betreffen — keine Implementierungsdetails
-- Neues Pflichtfeld `entschieden_von: ["anton", "timo"]`
-- Neues optionales Feld `alternativen: ["was auch erwogen wurde"]`
+- Schwellenwert im Prompt erhöhen: nur Inhalte die **über eine einzelne Session hinaus relevant** sind
+- Für jeden Typ ein Pflichtfeld `personen: ["anton", "timo"]` — wer ist direkt beteiligt/betroffen?
+- Triviale Implementierungsdetails explizit ausschließen (Beispiele im Prompt nennen)
 
-Neue Kanten:
+Neue Kanten (einheitlich für alle Typen):
 
-- `(Entscheidung)-[:ENTSCHIEDEN_VON]->(Person)`
+- `(Knoten)-[:BETRIFFT_PERSON]->(Person)` oder typ-spezifisch (ENTSCHIEDEN_VON, ERKANNT_VON, etc.)
 
 ---
 
