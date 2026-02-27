@@ -321,7 +321,7 @@ def call_haiku(prompt, budget_tracker):
         return None, usage, cost
 
 
-def build_extraction_prompt(messages, quelle, chunk_info=None):
+def build_extraction_prompt(messages, quelle, chunk_info=None, user_id=None):
     """Baut den Extraktions-Prompt."""
     transcript_parts = []
     char_count = 0
@@ -333,7 +333,13 @@ def build_extraction_prompt(messages, quelle, chunk_info=None):
             text = text[:1800] + "\n[...gekürzt...]"
 
         if role in ("user", "human", "anton", "timo"):
-            label = role.upper() if role in ("anton", "timo") else "MENSCH"
+            # user_id nutzen wenn vorhanden (z.B. "anton" statt "user")
+            if role in ("user", "human") and user_id:
+                label = user_id.upper()
+            elif role in ("anton", "timo"):
+                label = role.upper()
+            else:
+                label = "MENSCH"
             part = f"[{i}] {label}: {text}"
         elif role in ("assistant", "eli"):
             part = f"[{i}] ELI: {text}"
@@ -417,13 +423,13 @@ def extract_session(session_id, db_path, budget_tracker):
     """Extrahiert Wissen aus einer Claude-Session (mit Chunking)."""
     db = sqlite3.connect(db_path)
     row = db.execute(
-        "SELECT id, title, msg_count FROM sessions WHERE id = ?", (session_id,)
+        "SELECT id, title, msg_count, user_id FROM sessions WHERE id = ?", (session_id,)
     ).fetchone()
     if not row:
         print(f"  Session {session_id[:8]} nicht gefunden")
         return None
 
-    sid, title, msg_count = row
+    sid, title, msg_count, user_id = row
     rows = db.execute(
         "SELECT role, text, timestamp FROM messages WHERE session_id = ? ORDER BY timestamp",
         (sid,),
@@ -447,7 +453,7 @@ def extract_session(session_id, db_path, budget_tracker):
         if num_chunks > 1:
             chunk_info = {"current": chunk_idx + 1, "total": num_chunks}
 
-        prompt = build_extraction_prompt(chunk_msgs, "session", chunk_info)
+        prompt = build_extraction_prompt(chunk_msgs, "session", chunk_info, user_id=user_id)
 
         print(f"    Chunk {chunk_idx + 1}/{num_chunks} ({len(chunk_msgs)} msgs, ~{len(prompt) // 4:,} tokens)...", end=" ", flush=True)
 
