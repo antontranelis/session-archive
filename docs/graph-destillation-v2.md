@@ -144,6 +144,24 @@ Das spart API-Kosten und hält beides konsistent.
 
 ---
 
+### [P1] Entscheidungen — Qualität und Personenbezug
+
+**Problem 1 — Qualität:** Viele Entscheidungen sind triviale Implementierungsdetails ohne Wissenswert (z.B. "Black Background für Gemini-Generierung", "Maximal 3 Farben aus Logo extrahieren"). Nur 224 Kanten, alle nur zu Projekten.
+
+**Problem 2 — Personenbezug:** Entscheidungen hängen nur an Projekten, aber nicht an den Personen die sie getroffen haben.
+
+**Lösung:**
+
+- Im Destillations-Prompt klaren Schwellenwert setzen: nur Entscheidungen die **Architektur, Strategie, Richtung oder Werte** betreffen — keine Implementierungsdetails
+- Neues Pflichtfeld `entschieden_von: ["anton", "timo"]`
+- Neues optionales Feld `alternativen: ["was auch erwogen wurde"]`
+
+Neue Kanten:
+
+- `(Entscheidung)-[:ENTSCHIEDEN_VON]->(Person)`
+
+---
+
 ## Offene Fragen
 
 - Welche Kantentypen brauchen wir zwischen Person und Organisation? (MITGLIED_VON, BEAUFTRAGT_VON, GRUENDER_VON, FOERDERNEHMER_VON, ...)
