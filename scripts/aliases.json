@@ -1,10 +1,19 @@
 {
   "persons": {
     "mahula": "mathias",
+    "mathias lenz": "mathias",
     "boba": "bôba",
     "niko": "niko bonnieure",
     "anton tranelis": "anton",
     "fritz": "anton",
+    "sebastian stein": "sebastian",
+    "sebastian_galek": "sebastian galek",
+    "ulf gebhardt": "ulf",
+    "gerald_huether": "gerald hüther",
+    "jevaka": "jivako",
+    "huschim": "christiane",
+    "christiana": "christiane",
+    "tbot777bot": null,
     "eli/anton": null,
     "anton, timo": null,
     "mensch": null,
@@ -29,6 +38,11 @@
     "rainbow-gathering": "rainbow-bewegung",
     "rainbow-crystal-land": "rainbow-bewegung",
     "rainbow gathering": "rainbow-bewegung",
-    "rainbow crystal land": "rainbow-bewegung"
+    "rainbow crystal land": "rainbow-bewegung",
+    "real-life-netzwerk": "real-life-network",
+    "yoga vidya": "yoga-vidya",
+    "yoga vidya ashram": "yoga-vidya",
+    "yoga vidya bad meinberg": "yoga-vidya",
+    "yoga vidya e.v.": "yoga-vidya"
   }
 }
