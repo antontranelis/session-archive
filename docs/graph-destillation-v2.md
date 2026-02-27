@@ -59,24 +59,34 @@ Neue Kanten:
 
 ---
 
-### [P1] Themen — Sessions und Verbindungen hinzufügen
+### [P1] Themen — Querschnittsknoten die alles verbinden
 
-**Problem:** `themen.json` hat nur `name` + `count`, keine Sessions → keine Verknüpfungsmöglichkeit.
+**Problem:** `themen.json` hat nur `name` + `count`, keine Verbindungen zu irgendetwas. SQLite-Tags sind grobe technische Kategorien (design, deployment, debugging) — passen nicht zu den inhaltlichen Themen (dezentralisierung, vertrauen, identität). Zwei inkompatible Tag-Systeme.
 
-**Lösung:** Themen mit Sessions aus SQLite-Tags anreichern:
-```json
-{
-  "name": "dezentralisierung",
-  "count": 66,
-  "sessions":       ["061d22f6", ...],
-  "hauptpersonen":  ["anton", "timo"],
-  "hauptprojekte":  ["web-of-trust", "real-life-stack"]
-}
+**Vision:** Themen sind die wichtigsten Querschnittsknoten — sie sollten alles verbinden:
+
+```text
+Thema "dezentralisierung"
+  ← HAT_THEMA ── Projekt (web-of-trust, real-life-stack)
+  ← INTERESSIERT_AN ── Person (anton, timo, tillmann)
+  ← BETRIFFT_THEMA ── Entscheidung (did:key gewählt, ...)
+  ← BETRIFFT_THEMA ── Erkenntnis (...)
+  ← BETRIFFT_THEMA ── Spannung (...)
+  ← IN_SESSION ── Session (061d22f6, ...)
 ```
 
-Neue Kanten:
+**Lösung:** Nur per LLM in der Destillation lösbar — beim Lesen jeder Session:
+
+- Welche Themen aus der kuratierten Themenliste sind relevant?
+- Themen direkt in jeden extrahierten Knoten als `themen: [...]` eintragen
+- Themen auch direkt mit Sessions verknüpfen (`session.themen: [...]`)
+
+Neue Kanten (für alle Typen):
+
+- `(Projekt)-[:HAT_THEMA]->(Thema)`
 - `(Person)-[:INTERESSIERT_AN]->(Thema)`
-- `(Projekt)-[:HAT_THEMA]->(Thema)` (aktuell nur 6×, sollte ~100+ sein)
+- `(Entscheidung|Erkenntnis|Spannung|Herausforderung)-[:BETRIFFT_THEMA]->(Thema)`
+- `(Session)-[:HAT_THEMA]->(Thema)` ← Themen auch direkt an Sessions
 
 ---
 
