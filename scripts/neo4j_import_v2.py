@@ -26,7 +26,7 @@ NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "")
 
 SCRIPT_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(SCRIPT_DIR.parent)))
-MERGED_DIR = DATA_DIR / "merged"
+MERGED_DIR = DATA_DIR / "merged_v2"
 BACKUP_DIR = DATA_DIR / "backups"
 
 
