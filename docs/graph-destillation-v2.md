@@ -183,8 +183,20 @@ Neue Kanten (einheitlich für alle Typen):
 
 ---
 
+### [P2] Tags in Sessions abschaffen
+
+**Erkenntnis:** Das bisherige Tag-System an Sessions (flache Strings wie "design", "deployment") wird durch Themen-Knoten ersetzt. Themen verbinden alles — Sessions, Personen, Projekte, Entscheidungen — und machen separate Tags überflüssig.
+
+**Konsequenz:**
+
+- `sessions.tags` Feld wird nicht mehr befüllt
+- Stattdessen: `(Session)-[:HAT_THEMA]->(Thema)` aus der Destillation
+- Die Session-Ansicht im Archiv zeigt dann verlinkte Themen statt flacher Tags
+
+---
+
 ## Offene Fragen
 
 - Welche Kantentypen brauchen wir zwischen Person und Organisation? (MITGLIED_VON, BEAUFTRAGT_VON, GRUENDER_VON, FOERDERNEHMER_VON, ...)
 - Sollen Funding-Organisationen (nlnet, prototype fund) anders modelliert werden als Community-Orgs (yoga vidya, rainbow gathering)?
-- Wie granular sollen Themen-Verbindungen sein — pro Person oder nur für Hauptpersonen?
+- Themenliste vor Destillation kuratieren — wie viele Themen sind sinnvoll? (aktuell 63, vermutlich zu viele)
