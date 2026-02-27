@@ -156,7 +156,7 @@ Betrifft: **Entscheidungen, Erkenntnisse, Aufgaben, Meilensteine, Herausforderun
 
 - Entscheidungen: wer hat sie getroffen?
 - Erkenntnisse: wer hatte sie? (teilweise via `person`-Feld, aber inkonsistent)
-- Aufgaben: wer ist verantwortlich? (via `verantwortlich`, aber oft leer) — **nur offene Aufgaben mit Verantwortlichem gehören in den Graph, erledigte raus**
+- Aufgaben: gehören **nicht in den Wissensgraph** — sie sind Arbeitsspeicher für Eli und das Team, kein destilliertes Wissen. Stattdessen: offene Aufgaben mit Verantwortlichem separat in Eli's Gedächtnis / MCP speichern damit Eli ihre Rolle kennt und einnehmen kann
 - Herausforderungen: wen betrifft es konkret?
 - Meilensteine: wer hat sie erreicht?
 
