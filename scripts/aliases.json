@@ -1,0 +1,34 @@
+{
+  "persons": {
+    "mahula": "mathias",
+    "boba": "bôba",
+    "niko": "niko bonnieure",
+    "anton tranelis": "anton",
+    "fritz": "anton",
+    "eli/anton": null,
+    "anton, timo": null,
+    "mensch": null,
+    "ex-frau": null,
+    "grunewald": null,
+    "clement hochart": null,
+    "drummond reed": null,
+    "ruben daniels": null
+  },
+  "projects": {
+    "wot": "web-of-trust",
+    "web of trust": "web-of-trust",
+    "rls": "real-life-stack",
+    "real life stack": "real-life-stack",
+    "real-life stack": "real-life-stack",
+    "session archive": "session-archiv",
+    "session archiv": "session-archiv"
+  },
+  "organisations": {
+    "prototype fund": "prototype-fund",
+    "nlnet foundation": "nlnet",
+    "rainbow-gathering": "rainbow-bewegung",
+    "rainbow-crystal-land": "rainbow-bewegung",
+    "rainbow gathering": "rainbow-bewegung",
+    "rainbow crystal land": "rainbow-bewegung"
+  }
+}
