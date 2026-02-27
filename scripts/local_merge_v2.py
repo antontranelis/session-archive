@@ -10,12 +10,14 @@ Usage:
   python3 local_merge_v2.py
 """
 import json
+import os
 import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
-EXTRACTIONS_DIR = SCRIPT_DIR.parent / "extractions_v2"
-MERGED_DIR = SCRIPT_DIR.parent / "merged_raw"
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(SCRIPT_DIR.parent)))
+EXTRACTIONS_DIR = DATA_DIR / "extractions_v2"
+MERGED_DIR = DATA_DIR / "merged_raw"
 ALIASES_PATH = SCRIPT_DIR / "aliases.json"
 
 ENTITY_TYPES = [

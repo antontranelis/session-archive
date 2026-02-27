@@ -16,5 +16,6 @@ USER archiver
 EXPOSE 8111
 
 ENV DB_DIR=/app/db
+ENV DATA_DIR=/app/archive
 
 CMD ["python", "-u", "serve.py", "--port", "8111"]

@@ -25,8 +25,9 @@ NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "")
 
 SCRIPT_DIR = Path(__file__).parent
-MERGED_DIR = SCRIPT_DIR.parent / "merged"
-BACKUP_DIR = SCRIPT_DIR.parent / "backups"
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(SCRIPT_DIR.parent)))
+MERGED_DIR = DATA_DIR / "merged"
+BACKUP_DIR = DATA_DIR / "backups"
 
 
 def connect():

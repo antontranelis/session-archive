@@ -36,8 +36,9 @@ PRICE_OUTPUT = 15.00 / 1_000_000
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 SCRIPT_DIR = Path(__file__).parent
-MERGED_RAW_DIR = SCRIPT_DIR.parent / "merged_raw"
-MERGED_DIR = SCRIPT_DIR.parent / "merged"
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(SCRIPT_DIR.parent)))
+MERGED_RAW_DIR = DATA_DIR / "merged_raw"
+MERGED_DIR = DATA_DIR / "merged"
 
 # Typen die gemergt werden (themen brauchen keinen LLM-Merge)
 MERGE_TYPES = [

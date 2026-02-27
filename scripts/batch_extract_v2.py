@@ -53,8 +53,9 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ANTON", "")
 
 # === Pfade ===
 SCRIPT_DIR = Path(__file__).parent
-EXTRACTIONS_DIR = SCRIPT_DIR.parent / "extractions_v2"
-MANIFEST_PATH = SCRIPT_DIR / "extraction_manifest.json"
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(SCRIPT_DIR.parent)))
+EXTRACTIONS_DIR = DATA_DIR / "extractions_v2"
+MANIFEST_PATH = DATA_DIR / "extraction_manifest.json"
 
 # === Kuratierte Listen ===
 KNOWN_THEMES = [
@@ -606,7 +607,7 @@ def main():
         db_path = args.db
         if not Path(db_path).exists():
             # Fallback für lokale Tests
-            db_path = SCRIPT_DIR.parent / "archive.db"
+            db_path = DATA_DIR / "archive.db"
             if not Path(db_path).exists():
                 print(f"⚠️ Keine archive.db gefunden ({args.db})")
                 if args.source == "session":
