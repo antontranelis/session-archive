@@ -126,15 +126,21 @@ Kanten:
 
 ---
 
-### [P1] Session-Zusammenfassungen aktualisieren
+### [P1] Session-Zusammenfassungen parallel zur Destillation aktualisieren
 
-**Problem:** Viele Session-Zusammenfassungen sind veraltet oder unvollständig — sie spiegeln nicht mehr den aktuellen Stand des Projekts wider.
+**Problem:** Viele Session-Zusammenfassungen sind veraltet oder unvollständig.
 
-**Lösung:** Vor der nächsten Destillation alle Sessions neu zusammenfassen, insbesondere:
+**Erkenntnis:** Destillation und Zusammenfassung erfordern beide, dass jede Session vollständig gelesen wird — es wäre ineffizient das zweimal zu tun.
 
-- Sessions die wichtige Entscheidungen oder Architekturwechsel enthalten
-- Sessions wo die Zusammenfassung fehlt oder sehr kurz ist
-- Ältere Sessions die mit aktuellem Kontext neu bewertet werden sollten
+**Lösung:** In einem einzigen Durchlauf pro Session beides erzeugen:
+
+```text
+für jede Session:
+  → Zusammenfassung aktualisieren  (→ SQLite)
+  → Entitäten + Relationen extrahieren  (→ merged JSON)
+```
+
+Das spart API-Kosten und hält beides konsistent.
 
 ---
 
