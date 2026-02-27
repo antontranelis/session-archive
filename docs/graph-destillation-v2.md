@@ -156,7 +156,7 @@ Betrifft: **Entscheidungen, Erkenntnisse, Aufgaben, Meilensteine, Herausforderun
 
 - Entscheidungen: wer hat sie getroffen?
 - Erkenntnisse: wer hatte sie? (teilweise via `person`-Feld, aber inkonsistent)
-- Aufgaben: wer ist verantwortlich? (via `verantwortlich`, aber oft leer)
+- Aufgaben: wer ist verantwortlich? (via `verantwortlich`, aber oft leer) — **nur offene Aufgaben mit Verantwortlichem gehören in den Graph, erledigte raus**
 - Herausforderungen: wen betrifft es konkret?
 - Meilensteine: wer hat sie erreicht?
 
@@ -165,6 +165,7 @@ Betrifft: **Entscheidungen, Erkenntnisse, Aufgaben, Meilensteine, Herausforderun
 - Schwellenwert im Prompt erhöhen: nur Inhalte die **über eine einzelne Session hinaus relevant** sind
 - Für jeden Typ ein Pflichtfeld `personen: ["anton", "timo"]` — wer ist direkt beteiligt/betroffen?
 - Triviale Implementierungsdetails explizit ausschließen (Beispiele im Prompt nennen)
+- **Aufgaben:** nur `status: offen` oder `in-arbeit` + Verantwortlicher ist Pflicht — sonst nicht extrahieren
 
 Neue Kanten (einheitlich für alle Typen):
 
