@@ -432,7 +432,7 @@ def get_graph_data():
             WHERE any(l IN labels(n) WHERE l IN [
                 'Person','Projekt','Thema','Organisation',
                 'Aufgabe','Erkenntnis','Entscheidung','Meilenstein',
-                'Herausforderung','Spannung','Artefakt'
+                'Herausforderung','Spannung','Artefakt','Frage'
             ])
             RETURN id(n) as neo_id, labels(n) as labels, properties(n) as props
         """)
@@ -449,7 +449,7 @@ def get_graph_data():
                 "id": idx,
                 "neo_id": neo_id,
                 "type": label,
-                "name": props.get("name", "?"),
+                "name": props.get("name") or props.get("text", "?"),
             }
             if props.get("beschreibung"):
                 node["beschreibung"] = props["beschreibung"]
@@ -457,10 +457,12 @@ def get_graph_data():
                 node["status"] = props["status"]
             if props.get("projekt"):
                 node["projekt"] = props["projekt"]
-            if props.get("sessions"):
+            # session_ids (v2 field name) or legacy sessions field
+            raw_sids = props.get("session_ids") or props.get("sessions")
+            if raw_sids:
                 # Expand 8-char short IDs to full UUIDs
                 node["sessions"] = [
-                    sid_map.get(s, s) for s in props["sessions"]
+                    sid_map.get(s, s) for s in raw_sids
                 ]
             if props.get("msg_refs"):
                 mr = props["msg_refs"]
