@@ -209,6 +209,10 @@ Kombiniere msg_refs, session_ids."""
 - Keine neuen Einträge erfinden — nur zusammenführen was da ist.
 - Melde am Ende erkannte Duplikate/Aliase die du gesehen hast (als letztes Element mit key "_duplikate_hinweis").
 
+**PFLICHTFELDER — dürfen NIE fehlen oder leer sein:**
+- `session_ids`: IMMER die Union aller session_ids der zusammengeführten Einträge. Wenn du zwei Einträge zusammenführst, müssen BEIDE session_ids-Listen vereinigt werden. Leeres Array [] ist ein Fehler wenn irgendein Input-Eintrag session_ids hatte.
+- `msg_refs`: IMMER die Union aller msg_refs der zusammengeführten Einträge. Wenn du zwei Einträge zusammenführst, müssen BEIDE msg_refs-Listen vereinigt werden. Leeres Array [] ist ein Fehler wenn irgendein Input-Eintrag msg_refs hatte.
+
 **Typ:** {typ}
 **Einträge:** {len(entries)}
 
@@ -219,6 +223,58 @@ Kombiniere msg_refs, session_ids."""
 Antworte NUR mit dem gemergten JSON-Array:"""
 
     return prompt
+
+
+def restore_missing_refs(merged, inputs, name_field="name"):
+    """
+    Fallback: Stellt session_ids und msg_refs wieder her die der Merge verloren hat.
+    Für jeden Output-Eintrag: suche alle Input-Einträge mit ähnlichem Namen und
+    ergänze deren session_ids/msg_refs falls sie im Output fehlen.
+    """
+    # Baue Index: name (lowercase) → {session_ids, msg_refs} aus allen Inputs
+    input_index = {}
+    for item in inputs:
+        if not isinstance(item, dict):
+            continue
+        key = (item.get(name_field) or item.get("text") or "").lower().strip()
+        if not key:
+            continue
+        if key not in input_index:
+            input_index[key] = {"session_ids": set(), "msg_refs": set()}
+        for sid in item.get("session_ids", []):
+            input_index[key]["session_ids"].add(sid)
+        for ref in item.get("msg_refs", []):
+            input_index[key]["msg_refs"].add(ref)
+
+    restored = 0
+    for item in merged:
+        if not isinstance(item, dict):
+            continue
+        key = (item.get(name_field) or item.get("text") or "").lower().strip()
+        if not key:
+            continue
+
+        # Direkte Übereinstimmung
+        refs = input_index.get(key, {"session_ids": set(), "msg_refs": set()})
+
+        # Prüfe ob session_ids fehlen
+        current_sids = set(item.get("session_ids") or [])
+        if refs["session_ids"] and not current_sids:
+            item["session_ids"] = sorted(refs["session_ids"])
+            restored += 1
+        elif refs["session_ids"] - current_sids:
+            item["session_ids"] = sorted(current_sids | refs["session_ids"])
+
+        # Prüfe ob msg_refs fehlen
+        current_refs = set(item.get("msg_refs") or [])
+        if refs["msg_refs"] and not current_refs:
+            item["msg_refs"] = sorted(refs["msg_refs"])
+        elif refs["msg_refs"] - current_refs:
+            item["msg_refs"] = sorted(current_refs | refs["msg_refs"])
+
+    if restored > 0:
+        print(f"    ↩️  {restored} Einträge: session_ids aus Inputs wiederhergestellt")
+    return merged
 
 
 def merge_type(typ, entries, budget):
@@ -285,6 +341,7 @@ def merge_type(typ, entries, budget):
             all_merged = next_merged
 
         # Finaler Merge wenn alles in einen Batch passt
+        name_field = "text" if typ == "fragen" else "name"
         if len(all_merged) > 1:
             print(f"    Finaler Merge ({len(all_merged)} Einträge)...", end=" ", flush=True)
             prompt = build_merge_prompt(typ, all_merged)
@@ -296,9 +353,11 @@ def merge_type(typ, entries, budget):
                 hints = [r for r in result if isinstance(r, dict) and "_duplikate_hinweis" in r]
                 if hints:
                     print(f"    💡 {hints}")
-                return [r for r in result if not (isinstance(r, dict) and "_duplikate_hinweis" in r)]
-        return all_merged
+                clean = [r for r in result if not (isinstance(r, dict) and "_duplikate_hinweis" in r)]
+                return restore_missing_refs(clean, entries, name_field)
+        return restore_missing_refs(all_merged, entries, name_field)
 
+    name_field = "text" if typ == "fragen" else "name"
     prompt = build_merge_prompt(typ, entries)
     print(f"    {len(entries)} Einträge, ~{len(prompt) // 4:,} tokens...", end=" ", flush=True)
     result, usage, cost = call_sonnet(prompt, budget)
@@ -307,12 +366,11 @@ def merge_type(typ, entries, budget):
     print(f"${cost:.3f} (in:{in_t:,} out:{out_t:,})")
 
     if result and isinstance(result, list):
-        # Duplikate-Hinweise extrahieren
         hints = [r for r in result if isinstance(r, dict) and "_duplikate_hinweis" in r]
         if hints:
             print(f"    💡 Duplikate-Hinweise: {hints}")
             result = [r for r in result if "_duplikate_hinweis" not in r]
-        return result
+        return restore_missing_refs(result, entries, name_field)
     return entries  # Fallback: unverändert
 
 
