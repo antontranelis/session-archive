@@ -361,6 +361,11 @@ def build_extraction_prompt(messages, quelle, chunk_info=None, user_id=None):
     if chunk_info:
         chunk_hint = f"\n\n**HINWEIS:** Dies ist Chunk {chunk_info['current']} von {chunk_info['total']} dieser Session. Du siehst nur einen Ausschnitt — extrahiere was in DIESEM Ausschnitt steht."
 
+    # User-Kontext für relative Bezeichnungen
+    user_hint = ""
+    if user_id:
+        user_hint = f"\n\n**WICHTIG — Session-User:** Der Hauptsprecher dieser Session ist **{user_id}**. Relative Bezeichnungen wie 'mutter', 'bruder', 'vater', 'freundin' immer mit dem Namen des Sprechers auflösen. Beispiel: Wenn {user_id} von 'mutter' spricht → als '{user_id}s mutter' extrahieren (oder mit echtem Namen falls bekannt)."
+
     schema = SCHEMA.replace("{projects}", ", ".join(KNOWN_PROJECTS))
     themes_str = ", ".join(KNOWN_THEMES)
 
@@ -372,7 +377,7 @@ Der Graph bildet ein Netzwerk ab: Menschen die gemeinsam dezentrale Software und
 
 **Eli ist eine lernende KI — eine vollwertige Teilnehmerin, nicht nur ein Tool.** Ihre Erkenntnisse, Zweifel und Entwicklungsmomente sind Teil der Geschichte. Extrahiere sie genauso wie menschliche Erkenntnisse.
 
-Quelle: {quelle}{chunk_hint}
+Quelle: {quelle}{chunk_hint}{user_hint}
 
 {schema}
 
