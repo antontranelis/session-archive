@@ -1952,18 +1952,24 @@ def render_graph_page():
 
   function applyHash() {{
     const p = new URLSearchParams(location.hash.slice(1));
-    if (p.has('types')) {{
-      const t = new Set(p.get('types').split(',').filter(x => ALL_TYPES.has(x)));
-      activeTypes = t.size ? t : new Set(ALL_TYPES);
-    }} else {{
-      activeTypes = new Set(ALL_TYPES);
+    let filtersChanged = false;
+
+    const newTypes = p.has('types')
+      ? new Set(p.get('types').split(',').filter(x => ALL_TYPES.has(x)))
+      : new Set(ALL_TYPES);
+    if ([...newTypes].sort().join() !== [...activeTypes].sort().join()) {{
+      activeTypes = newTypes.size ? newTypes : new Set(ALL_TYPES);
+      filtersChanged = true;
     }}
-    if (p.has('edges')) {{
-      const e = new Set(p.get('edges').split(',').filter(x => ALL_EDGES.has(x)));
-      activeEdges = e.size ? e : new Set(ALL_EDGES);
-    }} else {{
-      activeEdges = new Set(ALL_EDGES);
+
+    const newEdges = p.has('edges')
+      ? new Set(p.get('edges').split(',').filter(x => ALL_EDGES.has(x)))
+      : new Set(ALL_EDGES);
+    if ([...newEdges].sort().join() !== [...activeEdges].sort().join()) {{
+      activeEdges = newEdges.size ? newEdges : new Set(ALL_EDGES);
+      filtersChanged = true;
     }}
+
     // Buttons aktualisieren
     document.querySelectorAll('[data-type]').forEach(btn => {{
       btn.classList.toggle('active', activeTypes.has(btn.dataset.type));
@@ -1971,19 +1977,25 @@ def render_graph_page():
     document.querySelectorAll('[data-edge]').forEach(btn => {{
       btn.classList.toggle('active', activeEdges.has(btn.dataset.edge));
     }});
-    // Node nach Graph-Aufbau öffnen
+
     const nodeId = p.has('node') ? parseInt(p.get('node')) : null;
-    return nodeId;
+    return {{ nodeId, filtersChanged }};
   }}
 
   window.addEventListener('popstate', () => {{
-    const nodeId = applyHash();
-    if (graphData) {{
+    if (!graphData) return;
+    const {{ nodeId, filtersChanged }} = applyHash();
+    if (filtersChanged) {{
       renderGraph();
-      if (nodeId !== null) {{
-        const n = nodeById.get(nodeId);
-        if (n) {{ highlightedNode = nodeId; showDetail(n); }}
-      }}
+    }}
+    // Knoten öffnen oder schließen ohne renderGraph
+    if (nodeId !== null) {{
+      const n = nodeById.get(nodeId);
+      if (n) {{ highlightedNode = nodeId; showDetail(n); updateHighlight(); }}
+    }} else {{
+      highlightedNode = null;
+      detailPanel.classList.remove('open');
+      updateHighlight();
     }}
   }});
   let currentNodes = [];
@@ -1997,10 +2009,9 @@ def render_graph_page():
     .then(data => {{
       graphData = data;
       loading.style.display = 'none';
-      const initialNode = applyHash();
+      const {{ nodeId: initialNode }} = applyHash();
       renderGraph();
       if (initialNode !== null) {{
-        // Knoten erst öffnen wenn nodeById befüllt ist (nach renderGraph)
         const n = nodeById.get(initialNode);
         if (n) {{ highlightedNode = initialNode; showDetail(n); updateHighlight(); }}
       }}
@@ -2208,10 +2219,23 @@ def render_graph_page():
     svg.call(zoom);
 
     svg.on('click', (e) => {{
-      if (e.target === svg.node()) {{
+      if (e.target !== svg.node()) return;
+      // Detail schließen
+      if (highlightedNode !== null) {{
         highlightedNode = null;
         updateHighlight();
         detailPanel.classList.remove('open');
+        pushState();
+      }}
+      // Animation pausieren / fortsetzen
+      if (!simPaused) {{
+        sim.stop();
+        currentNodes.forEach(d => {{ d.fx = d.x; d.fy = d.y; }});
+        simPaused = true;
+      }} else {{
+        currentNodes.forEach(d => {{ d.fx = null; d.fy = null; }});
+        sim.alpha(0.3).restart();
+        simPaused = false;
       }}
     }});
 
@@ -2309,24 +2333,14 @@ def render_graph_page():
       nodeElements.attr('cx', d => d.x).attr('cy', d => d.y);
       labelElements.attr('x', d => d.x).attr('y', d => d.y);
     }}
-    // Klick auf Hintergrund: Animation pausieren / fortsetzen
-    svg.on('click', (e) => {{
-      if (e.target.tagName !== 'svg') return;
-      if (!simPaused) {{
-        sim.stop();
-        data.nodes.forEach(d => {{ d.fx = d.x; d.fy = d.y; }});
-        simPaused = true;
-      }} else {{
-        data.nodes.forEach(d => {{ d.fx = null; d.fy = null; }});
-        sim.alpha(0.3).restart();
-        simPaused = false;
-      }}
-    }});
-
-    // Wenn Sim pausiert war: sofort wieder stoppen
+    // Wenn Sim pausiert war: nach erstem Tick einfrieren
     if (simPaused) {{
-      sim.stop();
-      data.nodes.forEach(d => {{ d.fx = d.x; d.fy = d.y; }});
+      sim.on('tick', () => {{
+        ticked();
+        sim.stop();
+        currentNodes.forEach(d => {{ d.fx = d.x; d.fy = d.y; }});
+        sim.on('tick', ticked);
+      }});
     }}
 
     // Auto-Fit nach kurzem Delay
