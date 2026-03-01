@@ -1943,12 +1943,15 @@ def render_graph_page():
     return p.toString() ? '#' + p.toString() : '#';
   }}
 
+  const GRAPH_PATH = location.pathname;
+
   function pushState() {{
-    history.pushState(null, '', stateToHash());
+    const h = stateToHash();
+    history.pushState(null, '', GRAPH_PATH + (h === '#' ? '' : h));
   }}
 
   // Beim ersten Load: Initialzustand in History ersetzen (kein leerer Eintrag)
-  history.replaceState(null, '', location.hash || '#');
+  history.replaceState(null, '', GRAPH_PATH + (location.hash || ''));
 
   function applyHash() {{
     const p = new URLSearchParams(location.hash.slice(1));
