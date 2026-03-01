@@ -2250,14 +2250,17 @@ def render_graph_page():
       labelElements.attr('x', d => d.x).attr('y', d => d.y);
     }}
     // Klick auf Hintergrund: Animation pausieren / fortsetzen
+    let simPaused = false;
     svg.on('click', (e) => {{
       if (e.target.tagName !== 'svg') return;
-      if (sim.alpha() > sim.alphaMin()) {{
+      if (!simPaused) {{
         sim.stop();
         data.nodes.forEach(d => {{ d.fx = d.x; d.fy = d.y; }});
+        simPaused = true;
       }} else {{
         data.nodes.forEach(d => {{ d.fx = null; d.fy = null; }});
         sim.alpha(0.3).restart();
+        simPaused = false;
       }}
     }});
 
