@@ -2170,9 +2170,12 @@ def render_graph_page():
       .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 3))
       .stop();
 
-    // Positionen vorab berechnen — kein Gewackel beim Start
+    // Großteil der Positionen vorab berechnen — kein wildes Gewackel beim Start
     const n = Math.ceil(Math.log(sim.alphaMin()) / Math.log(1 - sim.alphaDecay()));
-    for (let i = 0; i < n; i++) sim.tick();
+    for (let i = 0; i < n * 0.85; i++) sim.tick();
+
+    // Danach sanft einlaufen lassen (dezente Restanimation)
+    sim.alpha(0.05).restart();
 
     linkElements = g.append('g')
       .selectAll('line')
