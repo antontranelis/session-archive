@@ -1840,15 +1840,14 @@ def render_graph_page():
     <button class="active" data-type="Organisation">Orgs</button>
   </div>
   <div class="filter-row">
-    <button class="active" data-type="Aufgabe">Aufgaben</button>
     <button class="active" data-type="Erkenntnis">Erkenntn.</button>
     <button class="active" data-type="Entscheidung">Entscheid.</button>
     <button class="active" data-type="Meilenstein">Meilens.</button>
+    <button class="active" data-type="Frage">Fragen</button>
   </div>
   <div class="filter-row">
     <button class="active" data-type="Herausforderung">Herausf.</button>
-    <button class="active" data-type="Spannung">Spannung.</button>
-    <button class="active" data-type="Artefakt">Artefakte</button>
+    <button class="active" data-type="Spannung">Spannungen</button>
   </div>
   <div class="filter-label">Kanten</div>
   <div class="filter-row">
@@ -1893,15 +1892,15 @@ def render_graph_page():
 
   const typeColors = {{
     Person: '#6a9955', Projekt: '#007acc', Thema: '#569cd6',
-    Organisation: '#c586c0', Aufgabe: '#dcdcaa', Erkenntnis: '#4ec9b0',
+    Organisation: '#c586c0', Erkenntnis: '#4ec9b0',
     Entscheidung: '#ce9178', Meilenstein: '#9cdcfe',
-    Herausforderung: '#f44747', Spannung: '#ff8c00', Artefakt: '#b5cea8',
+    Herausforderung: '#f44747', Spannung: '#ff8c00', Frage: '#d7ba7d',
   }};
   const typeLabels = {{
     Person: 'Person', Projekt: 'Projekt', Thema: 'Thema',
-    Organisation: 'Organisation', Aufgabe: 'Aufgabe', Erkenntnis: 'Erkenntnis',
+    Organisation: 'Organisation', Erkenntnis: 'Erkenntnis',
     Entscheidung: 'Entscheidung', Meilenstein: 'Meilenstein',
-    Herausforderung: 'Herausforderung', Spannung: 'Spannung', Artefakt: 'Artefakt',
+    Herausforderung: 'Herausforderung', Spannung: 'Spannung', Frage: 'Frage',
   }};
   const edgeColors = {{
     IN_PROJEKT: '#007acc44', GEHOERT_ZU: '#569cd644', BETRIFFT: '#c586c044',
@@ -1933,6 +1932,7 @@ def render_graph_page():
   let activeTypes = new Set(ALL_TYPES);
   let activeEdges = new Set(ALL_EDGES);
   let highlightedNode = null;
+  let simPaused = false;
 
   // URL-State: #node=42&types=Person,Projekt&edges=KENNT
   function stateToHash() {{
@@ -1946,6 +1946,9 @@ def render_graph_page():
   function pushState() {{
     history.pushState(null, '', stateToHash());
   }}
+
+  // Beim ersten Load: Initialzustand in History ersetzen (kein leerer Eintrag)
+  history.replaceState(null, '', location.hash || '#');
 
   function applyHash() {{
     const p = new URLSearchParams(location.hash.slice(1));
@@ -2307,7 +2310,6 @@ def render_graph_page():
       labelElements.attr('x', d => d.x).attr('y', d => d.y);
     }}
     // Klick auf Hintergrund: Animation pausieren / fortsetzen
-    let simPaused = false;
     svg.on('click', (e) => {{
       if (e.target.tagName !== 'svg') return;
       if (!simPaused) {{
@@ -2320,6 +2322,12 @@ def render_graph_page():
         simPaused = false;
       }}
     }});
+
+    // Wenn Sim pausiert war: sofort wieder stoppen
+    if (simPaused) {{
+      sim.stop();
+      data.nodes.forEach(d => {{ d.fx = d.x; d.fy = d.y; }});
+    }}
 
     // Auto-Fit nach kurzem Delay
     setTimeout(() => {{
