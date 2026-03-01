@@ -1937,7 +1937,7 @@ def render_graph_page():
   let currentLinks = [];
   let nodeElements, linkElements, labelElements;
   let nodeById = new Map();     // id → node
-  let neighborIndex = new Map(); // id → [{node, edge, dir}]
+  let neighborIndex = new Map(); // id to list of {{node, edge, dir}}
 
   fetch(BASE + '/api/graph')
     .then(r => r.json())
