@@ -1888,7 +1888,7 @@ def render_graph_page():
 
   document.getElementById('detail-close').addEventListener('click', () => {{
     detailPanel.classList.remove('open');
-    if (highlightedNode !== null) {{ highlightedNode = null; updateHighlight(); }}
+    if (highlightedNode !== null) {{ highlightedNode = null; updateHighlight(); pushState(); }}
   }});
 
   const typeColors = {{
@@ -1933,6 +1933,56 @@ def render_graph_page():
   let activeTypes = new Set(ALL_TYPES);
   let activeEdges = new Set(ALL_EDGES);
   let highlightedNode = null;
+
+  // URL-State: #node=42&types=Person,Projekt&edges=KENNT
+  function stateToHash() {{
+    const p = new URLSearchParams();
+    if (highlightedNode !== null) p.set('node', highlightedNode);
+    if (activeTypes.size < ALL_TYPES.size) p.set('types', [...activeTypes].join(','));
+    if (activeEdges.size < ALL_EDGES.size) p.set('edges', [...activeEdges].join(','));
+    return p.toString() ? '#' + p.toString() : '#';
+  }}
+
+  function pushState() {{
+    history.pushState(null, '', stateToHash());
+  }}
+
+  function applyHash() {{
+    const p = new URLSearchParams(location.hash.slice(1));
+    if (p.has('types')) {{
+      const t = new Set(p.get('types').split(',').filter(x => ALL_TYPES.has(x)));
+      activeTypes = t.size ? t : new Set(ALL_TYPES);
+    }} else {{
+      activeTypes = new Set(ALL_TYPES);
+    }}
+    if (p.has('edges')) {{
+      const e = new Set(p.get('edges').split(',').filter(x => ALL_EDGES.has(x)));
+      activeEdges = e.size ? e : new Set(ALL_EDGES);
+    }} else {{
+      activeEdges = new Set(ALL_EDGES);
+    }}
+    // Buttons aktualisieren
+    document.querySelectorAll('[data-type]').forEach(btn => {{
+      btn.classList.toggle('active', activeTypes.has(btn.dataset.type));
+    }});
+    document.querySelectorAll('[data-edge]').forEach(btn => {{
+      btn.classList.toggle('active', activeEdges.has(btn.dataset.edge));
+    }});
+    // Node nach Graph-Aufbau öffnen
+    const nodeId = p.has('node') ? parseInt(p.get('node')) : null;
+    return nodeId;
+  }}
+
+  window.addEventListener('popstate', () => {{
+    const nodeId = applyHash();
+    if (graphData) {{
+      renderGraph();
+      if (nodeId !== null) {{
+        const n = nodeById.get(nodeId);
+        if (n) {{ highlightedNode = nodeId; showDetail(n); }}
+      }}
+    }}
+  }});
   let currentNodes = [];
   let currentLinks = [];
   let nodeElements, linkElements, labelElements;
@@ -1944,7 +1994,13 @@ def render_graph_page():
     .then(data => {{
       graphData = data;
       loading.style.display = 'none';
+      const initialNode = applyHash();
       renderGraph();
+      if (initialNode !== null) {{
+        // Knoten erst öffnen wenn nodeById befüllt ist (nach renderGraph)
+        const n = nodeById.get(initialNode);
+        if (n) {{ highlightedNode = initialNode; showDetail(n); updateHighlight(); }}
+      }}
     }})
     .catch(err => {{ loading.textContent = 'Fehler: ' + err.message; }});
 
@@ -2001,6 +2057,7 @@ def render_graph_page():
   function showDetail(d) {{
     highlightedNode = d.id;
     updateHighlight();
+    pushState();
 
     const color = typeColors[d.type] || '#666';
     let html = `<div class="detail-type" style="background:${{color}}33;color:${{color}}">${{typeLabels[d.type] || d.type}}</div>`;
@@ -2296,6 +2353,7 @@ def render_graph_page():
         btn.classList.add('active');
       }}
       renderGraph();
+      pushState();
     }});
   }});
 
@@ -2310,6 +2368,7 @@ def render_graph_page():
         btn.classList.add('active');
       }}
       renderGraph();
+      pushState();
     }});
   }});
 
