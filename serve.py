@@ -2174,8 +2174,9 @@ def render_graph_page():
     const n = Math.ceil(Math.log(sim.alphaMin()) / Math.log(1 - sim.alphaDecay()));
     for (let i = 0; i < n * 0.85; i++) sim.tick();
 
-    // Danach sanft einlaufen lassen (dezente Restanimation)
+    // Danach sanft einlaufen lassen, nach 3s stoppen
     sim.alpha(0.05).restart();
+    setTimeout(() => sim.stop(), 3000);
 
     linkElements = g.append('g')
       .selectAll('line')
