@@ -1936,6 +1936,8 @@ def render_graph_page():
   let currentNodes = [];
   let currentLinks = [];
   let nodeElements, linkElements, labelElements;
+  let nodeById = new Map();     // id → node
+  let neighborIndex = new Map(); // id → [{node, edge, dir}]
 
   fetch(BASE + '/api/graph')
     .then(r => r.json())
@@ -1977,27 +1979,8 @@ def render_graph_page():
   }}
 
   function getNeighbors(nodeId) {{
-    const neighbors = [];
-    currentLinks.forEach(l => {{
-      const src = typeof l.source === 'object' ? l.source : {{ id: l.source }};
-      const tgt = typeof l.target === 'object' ? l.target : {{ id: l.target }};
-      if (src.id === nodeId) {{
-        const n = currentNodes.find(x => x.id === tgt.id);
-        if (n) neighbors.push({{ node: n, edge: l.type, dir: 'out' }});
-      }}
-      if (tgt.id === nodeId) {{
-        const n = currentNodes.find(x => x.id === src.id);
-        if (n) neighbors.push({{ node: n, edge: l.type, dir: 'in' }});
-      }}
-    }});
-    // Deduplicate: same neighbor node + same edge type → keep one
-    const seen = new Set();
-    return neighbors.filter(nb => {{
-      const key = `${{nb.node.id}}:${{nb.edge}}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    }});
+    // O(1) lookup via pre-built index (built in renderGraph)
+    return neighborIndex.get(nodeId) || [];
   }}
 
   // msg_refs = [5, 28]  (list of 0-based message indices within the session)
@@ -2088,7 +2071,7 @@ def render_graph_page():
     detailContent.querySelectorAll('[data-focus-id]').forEach(el => {{
       el.addEventListener('click', () => {{
         const focusId = parseInt(el.dataset.focusId);
-        const focusNode = currentNodes.find(n => n.id === focusId);
+        const focusNode = nodeById.get(focusId);
         if (focusNode) showDetail(focusNode);
       }});
     }});
@@ -2123,6 +2106,27 @@ def render_graph_page():
     const data = filterData();
     currentNodes = data.nodes;
     currentLinks = data.links;
+
+    // Index aufbauen für O(1) Neighbor-Lookup
+    nodeById = new Map(currentNodes.map(n => [n.id, n]));
+    neighborIndex = new Map(currentNodes.map(n => [n.id, []]));
+    const seen = new Map();
+    currentLinks.forEach(l => {{
+      const srcId = typeof l.source === 'object' ? l.source.id : l.source;
+      const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+      const keyOut = `${{srcId}}:${{tgtId}}:${{l.type}}`;
+      const keyIn  = `${{tgtId}}:${{srcId}}:${{l.type}}`;
+      const tgtNode = nodeById.get(tgtId);
+      const srcNode = nodeById.get(srcId);
+      if (tgtNode && !seen.has(keyOut)) {{
+        seen.set(keyOut, true);
+        neighborIndex.get(srcId).push({{ node: tgtNode, edge: l.type, dir: 'out' }});
+      }}
+      if (srcNode && !seen.has(keyIn)) {{
+        seen.set(keyIn, true);
+        neighborIndex.get(tgtId).push({{ node: srcNode, edge: l.type, dir: 'in' }});
+      }}
+    }});
     if (!data.nodes.length) {{
       loading.textContent = 'Keine Knoten für diesen Filter.';
       loading.style.display = 'block';
