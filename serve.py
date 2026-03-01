@@ -2163,7 +2163,12 @@ def render_graph_page():
       .force('charge', d3.forceManyBody()
         .strength(d => typeCharge[d.type] || -100))
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 3));
+      .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 3))
+      .stop();
+
+    // Positionen vorab berechnen — kein Gewackel beim Start
+    const n = Math.ceil(Math.log(sim.alphaMin()) / Math.log(1 - sim.alphaDecay()));
+    for (let i = 0; i < n; i++) sim.tick();
 
     linkElements = g.append('g')
       .selectAll('line')
@@ -2236,25 +2241,30 @@ def render_graph_page():
       showDetail(d);
     }});
 
-    sim.on('tick', () => {{
+    function ticked() {{
       linkElements
         .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
         .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
       nodeElements.attr('cx', d => d.x).attr('cy', d => d.y);
       labelElements.attr('x', d => d.x).attr('y', d => d.y);
-    }});
+    }}
+    sim.on('tick', ticked);
 
+    // Einmal sofort rendern mit den vorberechneten Positionen
+    ticked();
+
+    // Auto-Fit sofort (Positionen sind bereits berechnet)
     setTimeout(() => {{
       const bounds = g.node().getBBox();
       if (bounds.width > 0) {{
         const scale = Math.min(width / (bounds.width + 120), height / (bounds.height + 120), 1.5) * 0.85;
         const tx = width / 2 - (bounds.x + bounds.width / 2) * scale;
         const ty = height / 2 - (bounds.y + bounds.height / 2) * scale;
-        svg.transition().duration(800).call(
+        svg.transition().duration(400).call(
           zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale)
         );
       }}
-    }}, 2500);
+    }}, 100);
 
     updateHighlight();
   }}
