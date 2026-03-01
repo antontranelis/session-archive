@@ -2168,14 +2168,21 @@ def render_graph_page():
         .strength(d => typeCharge[d.type] || -100))
       .force('center', d3.forceCenter(width / 2, height / 2))
       .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 3))
+      .alphaDecay(0.05)
       .stop();
 
-    // Alle Positionen vorab berechnen
+    // 90% vorab berechnen — Grundstruktur steht schon
     const n = Math.ceil(Math.log(sim.alphaMin()) / Math.log(1 - sim.alphaDecay()));
-    for (let i = 0; i < n; i++) sim.tick();
+    for (let i = 0; i < n * 0.9; i++) sim.tick();
 
-    // Positionen einfrieren — Sim läuft nie im Hintergrund
-    data.nodes.forEach(d => {{ d.fx = d.x; d.fy = d.y; }});
+    function freeze() {{
+      sim.stop();
+      data.nodes.forEach(d => {{ d.fx = d.x; d.fy = d.y; }});
+    }}
+
+    // Kurz einlaufen lassen, dann einfrieren
+    sim.on('tick', ticked).alpha(0.1).restart();
+    setTimeout(freeze, 2000);
 
     linkElements = g.append('g')
       .selectAll('line')
@@ -2195,8 +2202,14 @@ def render_graph_page():
       .style('cursor', 'pointer')
       .call(d3.drag()
         .on('start', (e, d) => {{ d.fx = d.x; d.fy = d.y; }})
-        .on('drag', (e, d) => {{ d.fx = e.x; d.fy = e.y; ticked(); }})
-        .on('end', (e, d) => {{ d.fx = e.x; d.fy = e.y; }})
+        .on('drag',  (e, d) => {{ d.fx = e.x; d.fy = e.y; ticked(); }})
+        .on('end',   (e, d) => {{
+          d.fx = e.x; d.fy = e.y;
+          // Kurz nachfedern lassen, dann wieder einfrieren
+          data.nodes.forEach(nd => {{ if (nd !== d) {{ nd.fx = nd.x; nd.fy = nd.y; }} }});
+          sim.alpha(0.05).restart();
+          setTimeout(freeze, 1500);
+        }})
       );
 
     const showLabels = activeTypes.size < ALL_TYPES.size || data.nodes.length < 200;
