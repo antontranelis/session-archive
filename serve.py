@@ -2167,22 +2167,9 @@ def render_graph_page():
       .force('charge', d3.forceManyBody()
         .strength(d => typeCharge[d.type] || -100))
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 3))
-      .alphaDecay(0.05)
-      .stop();
+      .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 3));
 
-    // 90% vorab berechnen — Grundstruktur steht schon
-    const n = Math.ceil(Math.log(sim.alphaMin()) / Math.log(1 - sim.alphaDecay()));
-    for (let i = 0; i < n * 0.9; i++) sim.tick();
-
-    function freeze() {{
-      sim.stop();
-      data.nodes.forEach(d => {{ d.fx = d.x; d.fy = d.y; }});
-    }}
-
-    // Kurz einlaufen lassen, dann einfrieren
-    sim.on('tick', ticked).alpha(0.1).restart();
-    setTimeout(freeze, 2000);
+    sim.on('tick', ticked);
 
     linkElements = g.append('g')
       .selectAll('line')
@@ -2201,15 +2188,9 @@ def render_graph_page():
       .attr('stroke-width', 1.5)
       .style('cursor', 'pointer')
       .call(d3.drag()
-        .on('start', (e, d) => {{ d.fx = d.x; d.fy = d.y; }})
-        .on('drag',  (e, d) => {{ d.fx = e.x; d.fy = e.y; ticked(); }})
-        .on('end',   (e, d) => {{
-          d.fx = e.x; d.fy = e.y;
-          // Kurz nachfedern lassen, dann wieder einfrieren
-          data.nodes.forEach(nd => {{ if (nd !== d) {{ nd.fx = nd.x; nd.fy = nd.y; }} }});
-          sim.alpha(0.05).restart();
-          setTimeout(freeze, 1500);
-        }})
+        .on('start', (e, d) => {{ if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }})
+        .on('drag',  (e, d) => {{ d.fx = e.x; d.fy = e.y; }})
+        .on('end',   (e, d) => {{ if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }})
       );
 
     const showLabels = activeTypes.size < ALL_TYPES.size || data.nodes.length < 200;
@@ -2268,10 +2249,19 @@ def render_graph_page():
       nodeElements.attr('cx', d => d.x).attr('cy', d => d.y);
       labelElements.attr('x', d => d.x).attr('y', d => d.y);
     }}
-    // Einmal rendern mit den vorberechneten Positionen
-    ticked();
+    // Klick auf Hintergrund: Animation pausieren / fortsetzen
+    svg.on('click', (e) => {{
+      if (e.target.tagName !== 'svg') return;
+      if (sim.alpha() > sim.alphaMin()) {{
+        sim.stop();
+        data.nodes.forEach(d => {{ d.fx = d.x; d.fy = d.y; }});
+      }} else {{
+        data.nodes.forEach(d => {{ d.fx = null; d.fy = null; }});
+        sim.alpha(0.3).restart();
+      }}
+    }});
 
-    // Auto-Fit sofort (Positionen sind bereits berechnet)
+    // Auto-Fit nach kurzem Delay
     setTimeout(() => {{
       const bounds = g.node().getBBox();
       if (bounds.width > 0) {{
