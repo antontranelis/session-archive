@@ -2170,13 +2170,12 @@ def render_graph_page():
       .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 3))
       .stop();
 
-    // Großteil der Positionen vorab berechnen — kein wildes Gewackel beim Start
+    // Alle Positionen vorab berechnen
     const n = Math.ceil(Math.log(sim.alphaMin()) / Math.log(1 - sim.alphaDecay()));
-    for (let i = 0; i < n * 0.85; i++) sim.tick();
+    for (let i = 0; i < n; i++) sim.tick();
 
-    // Danach sanft einlaufen lassen, nach 3s stoppen
-    sim.alpha(0.05).restart();
-    setTimeout(() => sim.stop(), 3000);
+    // Positionen einfrieren — Sim läuft nie im Hintergrund
+    data.nodes.forEach(d => {{ d.fx = d.x; d.fy = d.y; }});
 
     linkElements = g.append('g')
       .selectAll('line')
@@ -2195,9 +2194,9 @@ def render_graph_page():
       .attr('stroke-width', 1.5)
       .style('cursor', 'pointer')
       .call(d3.drag()
-        .on('start', (e, d) => {{ if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }})
-        .on('drag', (e, d) => {{ d.fx = e.x; d.fy = e.y; }})
-        .on('end', (e, d) => {{ if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }})
+        .on('start', (e, d) => {{ d.fx = d.x; d.fy = d.y; }})
+        .on('drag', (e, d) => {{ d.fx = e.x; d.fy = e.y; ticked(); }})
+        .on('end', (e, d) => {{ d.fx = e.x; d.fy = e.y; }})
       );
 
     const showLabels = activeTypes.size < ALL_TYPES.size || data.nodes.length < 200;
@@ -2256,9 +2255,7 @@ def render_graph_page():
       nodeElements.attr('cx', d => d.x).attr('cy', d => d.y);
       labelElements.attr('x', d => d.x).attr('y', d => d.y);
     }}
-    sim.on('tick', ticked);
-
-    // Einmal sofort rendern mit den vorberechneten Positionen
+    // Einmal rendern mit den vorberechneten Positionen
     ticked();
 
     // Auto-Fit sofort (Positionen sind bereits berechnet)
