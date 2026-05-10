@@ -751,7 +751,7 @@ def extract_text(content) -> str:
         parts = []
         for item in content:
             if isinstance(item, dict):
-                if item.get("type") == "text":
+                if item.get("type") in ("text", "input_text", "output_text"):
                     parts.append(strip_tags(item.get("text", "")))
                 elif item.get("type") == "tool_use":
                     name = item.get("name", "")
@@ -782,6 +782,131 @@ def parse_ts(ts_raw):
     return None
 
 
+def _first_non_empty(*values):
+    """Return the first non-empty string value."""
+    for value in values:
+        if isinstance(value, str):
+            value = value.strip()
+            if value:
+                return value
+    return ""
+
+
+def _iter_dict_values(*objects):
+    for obj in objects:
+        if isinstance(obj, dict):
+            yield obj
+
+
+def _extract_codex_metadata(obj):
+    """Extract codex metadata fields from event payloads."""
+    metadata = {
+        "title": "",
+        "cwd": "",
+        "model": "",
+        "session_id": "",
+    }
+    for source in _iter_dict_values(
+        obj,
+        obj.get("payload"),
+        obj.get("metadata"),
+        obj.get("message"),
+        obj.get("session"),
+        obj.get("event"),
+        obj.get("data"),
+    ):
+        metadata["title"] = _first_non_empty(
+            source.get("title"),
+            source.get("session_title"),
+            metadata["title"],
+        )
+        metadata["cwd"] = _first_non_empty(
+            source.get("cwd"),
+            source.get("working_directory"),
+            source.get("workingDirectory"),
+            metadata["cwd"],
+        )
+        metadata["model"] = _first_non_empty(
+            source.get("model"),
+            source.get("model_name"),
+            metadata["model"],
+        )
+        metadata["session_id"] = _first_non_empty(
+            source.get("id"),
+            source.get("session_id"),
+            source.get("sessionId"),
+            metadata["session_id"],
+        )
+    return metadata
+
+
+def _extract_codex_timestamp(*objects):
+    for source in _iter_dict_values(*objects):
+        for key in ("createdAt", "timestamp", "created_at", "time"):
+            parsed = parse_ts(source.get(key))
+            if parsed:
+                return parsed
+    return None
+
+
+def _extract_codex_event_message(obj):
+    """Parse Codex event_msg entries with type user_message / agent_message."""
+    if obj.get("type") != "event_msg":
+        return None
+    for source in _iter_dict_values(
+        obj.get("payload"),
+        obj.get("message"),
+        obj.get("event"),
+        obj.get("data"),
+        obj,
+    ):
+        event_type = source.get("type", "")
+        if event_type not in ("user_message", "agent_message"):
+            continue
+        content = source.get("message", source.get("content", source.get("text", "")))
+        text = extract_text(content)
+        if not text:
+            continue
+        role = "user" if event_type == "user_message" else "assistant"
+        ts = _extract_codex_timestamp(source, obj)
+        return {"role": role, "text": text, "timestamp": ts}
+    return None
+
+
+def _extract_codex_response_messages(obj):
+    """Fallback parser for Codex response_item entries."""
+    if obj.get("type") != "response_item":
+        return []
+    messages = []
+    for source in _iter_dict_values(obj.get("payload"), obj.get("response"), obj.get("message"), obj):
+        role = source.get("role", "")
+        if role in ("user", "assistant"):
+            text = extract_text(source.get("content", ""))
+            if text:
+                ts = _extract_codex_timestamp(source, obj)
+                messages.append({"role": role, "text": text, "timestamp": ts})
+        if role and role not in ("user", "assistant"):
+            continue
+        for field, role in (("input_text", "user"), ("output_text", "assistant")):
+            text = extract_text(source.get(field, ""))
+            if not text:
+                continue
+            ts = _extract_codex_timestamp(source, obj)
+            messages.append({"role": role, "text": text, "timestamp": ts})
+    # Avoid duplicate entries if `input_text` and `output_text` are repeated.
+    if not messages:
+        return []
+    seen = set()
+    deduped = []
+    for message in messages:
+        key = (message["role"], message["text"], message["timestamp"].isoformat() if message["timestamp"] else "")
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(message)
+    return deduped
+
+
 # ── SQLite Index ─────────────────────────────────────────
 
 db_lock = threading.Lock()
@@ -797,7 +922,9 @@ def init_db():
         last_ts TEXT,
         msg_count INTEGER,
         file_hash TEXT,
-        user_id TEXT DEFAULT 'anton'
+        user_id TEXT DEFAULT 'anton',
+        cwd TEXT,
+        model TEXT
     )""")
     db.execute("""CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -833,6 +960,14 @@ def init_db():
         db.execute("SELECT graph_data FROM sessions LIMIT 1")
     except sqlite3.OperationalError:
         db.execute("ALTER TABLE sessions ADD COLUMN graph_data TEXT")  # JSON: projects, decisions, mentions
+    try:
+        db.execute("SELECT cwd FROM sessions LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT")
+    try:
+        db.execute("SELECT model FROM sessions LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute("ALTER TABLE sessions ADD COLUMN model TEXT")
     # Fix HTML entities in titles (e.g. &uuml; → ü)
     for sid, title in db.execute("SELECT id, title FROM sessions WHERE title LIKE '%&%;%'").fetchall():
         db.execute("UPDATE sessions SET title = ? WHERE id = ?", (html_mod.unescape(title), sid))
@@ -974,6 +1109,14 @@ def _index_sessions_locked(db: sqlite3.Connection):
         messages = []
         first_ts = None
         last_ts = None
+        codex_event_messages = []
+        codex_response_messages = []
+        codex_metadata = {
+            "title": "",
+            "cwd": "",
+            "model": "",
+            "session_id": "",
+        }
 
         with open(filepath) as f:
             for line in f:
@@ -981,9 +1124,24 @@ def _index_sessions_locked(db: sqlite3.Connection):
                     obj = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+
+                # Extract Codex-specific metadata
+                line_meta = _extract_codex_metadata(obj)
+                for key in codex_metadata:
+                    if line_meta.get(key):
+                        codex_metadata[key] = line_meta[key]
+
                 msg_type = obj.get("type", "")
                 if msg_type not in ("user", "assistant", "summary"):
+                    # Prefer Codex native `event_msg`; use `response_item` only if no event entries exist.
+                    if msg_type == "event_msg":
+                        event_msg = _extract_codex_event_message(obj)
+                        if event_msg:
+                            codex_event_messages.append(event_msg)
+                    elif msg_type == "response_item":
+                        codex_response_messages.extend(_extract_codex_response_messages(obj))
                     continue
+
                 msg = obj.get("message", {})
                 content = msg.get("content", "")
                 ts = parse_ts(msg.get("createdAt") or obj.get("timestamp"))
@@ -1001,17 +1159,31 @@ def _index_sessions_locked(db: sqlite3.Connection):
                     role = msg.get("role", msg_type)
                 messages.append({"role": role, "text": text, "timestamp": ts})
 
+        if codex_event_messages:
+            messages.extend(codex_event_messages)
+        elif codex_response_messages:
+            messages.extend(codex_response_messages)
+
+        parsed_ts = [msg["timestamp"] for msg in messages if msg["timestamp"]]
+        if parsed_ts:
+            timestamps = sorted(parsed_ts)
+            first_ts = min(first_ts, timestamps[0]) if first_ts else timestamps[0]
+            last_ts = max(last_ts, timestamps[-1]) if last_ts else timestamps[-1]
+
         if len(messages) < MIN_MSG_COUNT:
             continue
 
         # Title = first meaningful user message
         title = ""
-        for m in messages:
-            if m["role"] in ("user", "human"):
-                clean = m["text"].strip()
-                if clean and len(clean) > 3:
-                    title = html_mod.unescape(clean[:120])
-                    break
+        if codex_metadata["title"]:
+            title = codex_metadata["title"]
+        if not title:
+            for m in messages:
+                if m["role"] in ("user", "human"):
+                    clean = m["text"].strip()
+                    if clean and len(clean) > 3:
+                        title = html_mod.unescape(clean[:120])
+                        break
         if not title:
             title = f"Session {session_id[:8]}"
 
@@ -1027,11 +1199,11 @@ def _index_sessions_locked(db: sqlite3.Connection):
 
             # Insert session
             db.execute(
-                "INSERT INTO sessions (id, title, first_ts, last_ts, msg_count, file_hash, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO sessions (id, title, first_ts, last_ts, msg_count, file_hash, user_id, cwd, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (session_id, title,
                  first_ts.isoformat() if first_ts else None,
                  last_ts.isoformat() if last_ts else None,
-                 len(messages), fhash, user_id),
+                 len(messages), fhash, user_id, codex_metadata["cwd"], codex_metadata["model"]),
             )
 
             # Insert messages
@@ -1076,6 +1248,8 @@ def _index_sessions_locked(db: sqlite3.Connection):
                 "user_id": user_id,
                 "role": msg["role"],
                 "date": date_str,
+                "model": codex_metadata["model"],
+                "cwd": codex_metadata["cwd"],
                 "title": title[:80],
             })
 
@@ -1084,7 +1258,11 @@ def _index_sessions_locked(db: sqlite3.Connection):
             # Build summary from title + all user messages (condensed)
             user_msgs = [m["text"][:200] for m in messages if m["role"] in ("user", "human") and len(m["text"]) > 10]
             assistant_msgs = [m["text"][:200] for m in messages if m["role"] == "assistant" and len(m["text"]) > 50]
-            summary_parts = [f"Session: {title}",  f"Datum: {date_str}", f"Nutzer: {user_id}"]
+            summary_parts = [f"Session: {title}", f"Datum: {date_str}", f"Nutzer: {user_id}"]
+            if codex_metadata["model"]:
+                summary_parts.append(f"Modell: {codex_metadata['model']}")
+            if codex_metadata["cwd"]:
+                summary_parts.append(f"Arbeitsverzeichnis: {codex_metadata['cwd']}")
             if user_msgs:
                 summary_parts.append("Themen (Mensch): " + " | ".join(user_msgs[:15]))
             if assistant_msgs:

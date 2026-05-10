@@ -43,13 +43,16 @@ Der Wissensgraph ist unter http://localhost:8111/graph
 ```bash
 pip install -r requirements.txt
 python serve.py --users tillmann:/pfad/zu/sessions --port 8111
+
+# Mit Codex-Session-Dateien zusätzlich:
+# python serve.py --users tillmann:/pfad/zu/sessions codex:~/.codex/sessions --port 8111
 ```
 
 Ohne Docker läuft nur SQLite + Volltext-Suche. Für Chroma-Embeddings und Neo4j-Graph brauchst du die entsprechenden Services separat.
 
 ## Multi-User Setup
 
-Wenn mehrere Personen Sessions haben, lege Unterordner an:
+Wenn mehrere Personen Sessions haben, lege Unterordner an oder mappe weitere Nutzer explizit:
 
 ```
 _sessions/
@@ -57,12 +60,22 @@ _sessions/
     *.jsonl
   timo/
     *.jsonl
+  codex/
+    *.jsonl
 ```
 
 ```env
 SESSIONS_DIR=./_sessions
-USERS=anton:/app/sessions/anton timo:/app/sessions/timo
+USERS=anton:/app/sessions/anton timo:/app/sessions/timo codex:/home/user/.codex/sessions
 ```
+
+Beispiel für Codex-spezifischen Import:
+
+```bash
+python serve.py --users anton:/home/user/.claude/projects codex:/home/user/.codex/sessions --port 8111
+```
+
+Die Format-Erkennung passiert pro JSONL-Zeile anhand der Inhalte, nicht anhand des Nutzer-Namens im Mapping.
 
 ## Features
 
