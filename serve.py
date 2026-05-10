@@ -2875,6 +2875,26 @@ def api_search(db, query: str, semantic=False, limit=50, user_id=None, full=Fals
         return json.dumps({"mode": "fulltext", "query": query, "results": results}, ensure_ascii=False)
 
 
+
+
+def api_sessions(db, user_id=None, limit=10):
+    """JSON API: Recent sessions with summaries, optionally filtered by user."""
+    sessions = get_all_sessions_from_db(db, user_id)
+    sessions = sessions[:limit]
+    result = []
+    for s in sessions:
+        result.append({
+            'id': s['id'],
+            'title': s.get('title') or '(Ohne Titel)',
+            'user_id': s.get('user_id') or 'unknown',
+            'summary': s.get('summary') or '',
+            'tags': s.get('tags') or '',
+            'first_ts': s.get('first_ts') or '',
+            'last_ts': s.get('last_ts') or '',
+            'msg_count': s.get('msg_count') or 0,
+        })
+    return json.dumps({'sessions': result, 'total': len(result)}, ensure_ascii=False)
+
 # ── HTTP Server ──────────────────────────────────────────
 
 class ArchiveHandler(BaseHTTPRequestHandler):
@@ -2926,6 +2946,12 @@ class ArchiveHandler(BaseHTTPRequestHandler):
             body = api_search(self.db, query, semantic, limit, user_filter, full)
             self.respond(200, body, content_type="application/json; charset=utf-8")
 
+
+        elif path == "/api/sessions":
+            limit = int(params.get('limit', ['10'])[0])
+            user_filter = params.get('user', [None])[0]
+            body = api_sessions(self.db, user_filter, limit)
+            self.respond(200, body, content_type='application/json; charset=utf-8')
         elif path == "/graph":
             body = render_graph_page()
             self.respond(200, body)
