@@ -75,6 +75,8 @@ Beispiel für Codex-spezifischen Import:
 python serve.py --users anton:/home/user/.claude/projects codex:/home/user/.codex/sessions --port 8111
 ```
 
+Die Format-Erkennung passiert pro JSONL-Zeile anhand der Inhalte, nicht anhand des Nutzer-Namens im Mapping.
+
 ## Features
 
 ### Suche

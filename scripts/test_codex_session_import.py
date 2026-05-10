@@ -29,6 +29,7 @@ def read_roles_and_messages(db, session_id: str):
 
 
 def run_index(tmp_root: Path, users: dict[str, str]) -> tuple:
+    # These tests mutate serve module globals; keep this file sequential.
     old_db_path = serve.DB_PATH
     old_users = dict(serve.USERS)
 
@@ -269,6 +270,16 @@ def test_codex_payload_response_item_fallback():
                     "content": [{"type": "input_text", "text": "Zweite Frage?"}],
                 },
             },
+            {
+                "timestamp": "2026-05-10T13:00:04Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "system",
+                    "input_text": "Nicht als User importieren.",
+                    "output_text": "Nicht als Assistant importieren.",
+                },
+            },
         ])
 
         db = run_index(root, {"codex": str(codex_user_dir)})
@@ -277,6 +288,7 @@ def test_codex_payload_response_item_fallback():
             assert [r[0] for r in rows] == ["user", "assistant", "user"], rows
             assert rows[0][1] == "Erste Frage?", rows
             assert rows[1][1] == "Erste Antwort.", rows
+            assert all("Nicht als" not in r[1] for r in rows), rows
             model = db.execute("SELECT model FROM sessions WHERE id = ?", (sid,)).fetchone()[0]
             assert model == "gpt-5.3-codex", model
         finally:

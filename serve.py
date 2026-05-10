@@ -885,6 +885,8 @@ def _extract_codex_response_messages(obj):
             if text:
                 ts = _extract_codex_timestamp(source, obj)
                 messages.append({"role": role, "text": text, "timestamp": ts})
+        if role and role not in ("user", "assistant"):
+            continue
         for field, role in (("input_text", "user"), ("output_text", "assistant")):
             text = extract_text(source.get(field, ""))
             if not text:
