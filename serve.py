@@ -751,7 +751,7 @@ def extract_text(content) -> str:
         parts = []
         for item in content:
             if isinstance(item, dict):
-                if item.get("type") == "text":
+                if item.get("type") in ("text", "input_text", "output_text"):
                     parts.append(strip_tags(item.get("text", "")))
                 elif item.get("type") == "tool_use":
                     name = item.get("name", "")
@@ -808,6 +808,7 @@ def _extract_codex_metadata(obj):
     }
     for source in _iter_dict_values(
         obj,
+        obj.get("payload"),
         obj.get("metadata"),
         obj.get("message"),
         obj.get("session"),
@@ -831,6 +832,7 @@ def _extract_codex_metadata(obj):
             metadata["model"],
         )
         metadata["session_id"] = _first_non_empty(
+            source.get("id"),
             source.get("session_id"),
             source.get("sessionId"),
             metadata["session_id"],
@@ -852,6 +854,7 @@ def _extract_codex_event_message(obj):
     if obj.get("type") != "event_msg":
         return None
     for source in _iter_dict_values(
+        obj.get("payload"),
         obj.get("message"),
         obj.get("event"),
         obj.get("data"),
@@ -860,7 +863,7 @@ def _extract_codex_event_message(obj):
         event_type = source.get("type", "")
         if event_type not in ("user_message", "agent_message"):
             continue
-        content = source.get("content", source.get("text", ""))
+        content = source.get("message", source.get("content", source.get("text", "")))
         text = extract_text(content)
         if not text:
             continue
@@ -875,7 +878,13 @@ def _extract_codex_response_messages(obj):
     if obj.get("type") != "response_item":
         return []
     messages = []
-    for source in _iter_dict_values(obj.get("response"), obj.get("message"), obj):
+    for source in _iter_dict_values(obj.get("payload"), obj.get("response"), obj.get("message"), obj):
+        role = source.get("role", "")
+        if role in ("user", "assistant"):
+            text = extract_text(source.get("content", ""))
+            if text:
+                ts = _extract_codex_timestamp(source, obj)
+                messages.append({"role": role, "text": text, "timestamp": ts})
         for field, role in (("input_text", "user"), ("output_text", "assistant")):
             text = extract_text(source.get(field, ""))
             if not text:

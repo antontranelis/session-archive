@@ -101,6 +101,84 @@ def test_codex_event_msg_parsing():
             db.close()
 
 
+def test_codex_payload_event_msg_parsing():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        codex_user_dir = root / "codex_sessions"
+        sid = "rollout-2026-05-10T12-00-00-019e-codex-realistic"
+
+        write_jsonl(codex_user_dir / f"{sid}.jsonl", [
+            {
+                "timestamp": "2026-05-10T12:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "019e-codex-realistic",
+                    "cwd": "/tmp/codex-realistic",
+                },
+            },
+            {
+                "timestamp": "2026-05-10T12:00:01Z",
+                "type": "turn_context",
+                "payload": {
+                    "model": "gpt-5.3-codex-spark",
+                    "cwd": "/tmp/codex-realistic",
+                },
+            },
+            {
+                "timestamp": "2026-05-10T12:00:02Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "user_message",
+                    "message": "Bitte importiere diese Codex-Session.",
+                    "text_elements": [],
+                },
+            },
+            {
+                "timestamp": "2026-05-10T12:00:03Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "agent_message",
+                    "message": "Ich importiere sie.",
+                    "phase": "commentary",
+                },
+            },
+            {
+                "timestamp": "2026-05-10T12:00:04Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "user_message",
+                    "message": "Danke.",
+                    "text_elements": [],
+                },
+            },
+            {
+                "timestamp": "2026-05-10T12:00:05Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{"type": "input_text", "text": "Nicht archivieren."}],
+                },
+            },
+        ])
+
+        db = run_index(root, {"codex": str(codex_user_dir)})
+        try:
+            rows = read_roles_and_messages(db, sid)
+            assert [r[0] for r in rows] == ["user", "assistant", "user"], rows
+            assert "Bitte importiere" in rows[0][1], rows
+            assert all("Nicht archivieren" not in r[1] for r in rows), rows
+            title, cwd, model = db.execute(
+                "SELECT title, cwd, model FROM sessions WHERE id = ?",
+                (sid,),
+            ).fetchone()
+            assert title == "Bitte importiere diese Codex-Session.", title
+            assert cwd == "/tmp/codex-realistic", cwd
+            assert model == "gpt-5.3-codex-spark", model
+        finally:
+            db.close()
+
+
 def test_codex_response_item_fallback():
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
@@ -153,6 +231,58 @@ def test_codex_response_item_fallback():
             db.close()
 
 
+def test_codex_payload_response_item_fallback():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        codex_user_dir = root / "codex_sessions"
+        sid = "codex-payload-response-item"
+        write_jsonl(codex_user_dir / f"{sid}.jsonl", [
+            {
+                "timestamp": "2026-05-10T13:00:00Z",
+                "type": "turn_context",
+                "payload": {"model": "gpt-5.3-codex"},
+            },
+            {
+                "timestamp": "2026-05-10T13:00:01Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Erste Frage?"}],
+                },
+            },
+            {
+                "timestamp": "2026-05-10T13:00:02Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Erste Antwort."}],
+                },
+            },
+            {
+                "timestamp": "2026-05-10T13:00:03Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Zweite Frage?"}],
+                },
+            },
+        ])
+
+        db = run_index(root, {"codex": str(codex_user_dir)})
+        try:
+            rows = read_roles_and_messages(db, sid)
+            assert [r[0] for r in rows] == ["user", "assistant", "user"], rows
+            assert rows[0][1] == "Erste Frage?", rows
+            assert rows[1][1] == "Erste Antwort.", rows
+            model = db.execute("SELECT model FROM sessions WHERE id = ?", (sid,)).fetchone()[0]
+            assert model == "gpt-5.3-codex", model
+        finally:
+            db.close()
+
+
 def test_claude_compat_remains_unchanged():
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
@@ -198,7 +328,9 @@ def test_claude_compat_remains_unchanged():
 
 def main():
     test_codex_event_msg_parsing()
+    test_codex_payload_event_msg_parsing()
     test_codex_response_item_fallback()
+    test_codex_payload_response_item_fallback()
     test_claude_compat_remains_unchanged()
     print("test_codex_session_import.py: OK")
 
