@@ -13,6 +13,7 @@ Then:  http://localhost:8111
 """
 
 import json
+import sys
 import os
 import glob
 import re
@@ -28,7 +29,7 @@ from zoneinfo import ZoneInfo
 CET = ZoneInfo("Europe/Berlin")
 MIN_MSG_COUNT = 3  # Sessions with fewer messages are skipped (warm-up/test sessions)
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, urlencode
 from pathlib import Path
 
 DB_PATH = Path(os.environ.get("DB_DIR", str(Path(__file__).parent))) / "archive.db"
@@ -54,6 +55,10 @@ _default_dir = "/home/fritz/.claude/projects/-home-fritz-workspace-workspace"
 
 # API key for remote access (set via env or --api-key)
 API_KEY = os.environ.get("ARCHIVE_API_KEY", "")
+
+# Ausdruecklich offen laufen (nur lokal sinnvoll). Ohne diesen Schalter
+# und ohne Schluessel startet der Dienst nicht - siehe main().
+OFFEN = os.environ.get("ARCHIVE_OFFEN", "") == "1"
 
 # Base path prefix for reverse proxy (e.g. "/archive" when behind /archive/*)
 BASE_PATH = os.environ.get("BASE_PATH", "").rstrip("/")
@@ -2901,13 +2906,23 @@ class ArchiveHandler(BaseHTTPRequestHandler):
     db = None
 
     def check_auth(self, params):
-        """Check API key if one is configured. Returns True if OK."""
-        if not API_KEY:
-            return True  # no key configured = open access (local use)
-        # Check query parameter
+        """Check API key. Returns True if OK.
+
+        Ohne Schluessel wird der Dienst gar nicht erst gestartet (siehe
+        main()). Frueher galt hier "kein Schluessel = offen fuer alle" -
+        eine leere Umgebungsvariable oeffnete das ganze Archiv, ohne dass
+        irgendwo etwas anders aussah. Wer wirklich offen laufen will,
+        sagt das jetzt ausdruecklich mit --offen.
+        """
+        if OFFEN:
+            return True
+        # Schluessel in der Adresszeile: einmal zum Anmelden erlaubt, aber
+        # die Antwort leitet sofort ohne ihn weiter (siehe do_GET). Sonst
+        # steht er dauerhaft im Verlauf, in Lesezeichen und im Referer.
         key = params.get("key", [None])[0]
         if key == API_KEY:
             self._set_auth_cookie = True
+            self._strip_key = True
             return True
         # Check Authorization header
         auth = self.headers.get("Authorization", "")
@@ -2928,6 +2943,23 @@ class ArchiveHandler(BaseHTTPRequestHandler):
 
         if not self.check_auth(params):
             self.respond(401, '{"error": "unauthorized"}', content_type="application/json")
+            return
+
+        # Anmeldung ueber ?key= hat geklappt: Cookie setzen und sofort auf
+        # dieselbe Adresse ohne Schluessel weiterleiten. Danach steht er
+        # weder in der Adresszeile noch in Lesezeichen, im Verlauf oder im
+        # Referer folgender Aufrufe.
+        if getattr(self, "_strip_key", False):
+            self._strip_key = False
+            rest = {k: v for k, v in params.items() if k != "key"}
+            ziel = BASE_PATH + path
+            if rest:
+                ziel += "?" + urlencode(rest, doseq=True)
+            self.send_response(302)
+            self.send_header("Location", ziel)
+            self.send_header("Set-Cookie", f"archive_key={API_KEY}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000")
+            self._set_auth_cookie = False
+            self.end_headers()
             return
 
         if path == "/" or path == "":
@@ -3004,12 +3036,32 @@ def main():
     parser.add_argument("--api-key", help="API key for remote access (or set ARCHIVE_API_KEY env)")
     parser.add_argument("--base-path", help="URL prefix for reverse proxy (e.g. /archive)")
     parser.add_argument("--rebuild-chroma", action="store_true", help="Delete and rebuild Chroma embeddings from scratch")
+    parser.add_argument("--offen", action="store_true",
+                        help="Ohne Schluessel laufen - jeder darf alles lesen. Nur lokal sinnvoll.")
     args = parser.parse_args()
 
-    # Configure API key
-    global API_KEY
+    # Ohne Schluessel nicht starten.
+    #
+    # Frueher galt "kein Schluessel = offen". Eine leere Umgebungsvariable
+    # - ein Tippfehler, eine vergessene .env - oeffnete damit das gesamte
+    # Archiv, und von aussen sah nichts anders aus als sonst. Genau so lag
+    # Chroma sieben Monate lang offen im Netz.
+    #
+    # Jetzt muss man sich entscheiden: Schluessel setzen oder --offen
+    # sagen. Beides ist sichtbar, keines passiert versehentlich.
+    global API_KEY, OFFEN
     if args.api_key:
         API_KEY = args.api_key
+    if args.offen:
+        OFFEN = True
+    if not API_KEY and not OFFEN:
+        print("FEHLER: kein ARCHIVE_API_KEY gesetzt.", file=sys.stderr)
+        print("  Entweder ARCHIVE_API_KEY/--api-key setzen,", file=sys.stderr)
+        print("  oder --offen angeben, wenn das Archiv wirklich fuer alle", file=sys.stderr)
+        print("  lesbar sein soll (nur lokal sinnvoll).", file=sys.stderr)
+        sys.exit(2)
+    if OFFEN:
+        print("  ACHTUNG: --offen, das Archiv ist ohne Anmeldung lesbar")
 
     # Configure base path
     global BASE_PATH
