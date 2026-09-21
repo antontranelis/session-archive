@@ -34,11 +34,17 @@ SCHLUESSEL_CODEX="$HOME/.ssh/id_ed25519_eli_codex"
 
 # Eine Verbindung fuer alle Projektordner statt einer je Ordner. Der Kanal
 # bleibt eine Minute offen; danach raeumt ihn ssh selbst ab.
-KANAL="/tmp/eli-sync-%r@%h"
-MULTIPLEX="-o ControlMaster=auto -o ControlPath=$KANAL -o ControlPersist=60"
-
+#
+# JE SCHLUESSEL EIN EIGENER KANAL. %r@%h loest sich fuer beide Schluessel
+# zu eli@82.165.138.182 auf - ein gemeinsamer Pfad bedeutet also: der
+# Codex-Aufruf uebernimmt die schon offene Verbindung des ersten
+# Schluessels, samt dessen erzwungenem Befehl. Die Codex-Sitzungen
+# landeten dann in archive/anton statt archive/codex, rsync meldete
+# Erfolg, und die Dateien laegen still am falschen Ort.
 ssh_mit() {
-    echo "ssh -i $1 -o IdentitiesOnly=yes $MULTIPLEX"
+    # $1 = Name des Kanals, $2 = Schluesseldatei
+    echo "ssh -i $2 -o IdentitiesOnly=yes" \
+         "-o ControlMaster=auto -o ControlPath=/tmp/eli-sync-$1-%r@%h -o ControlPersist=60"
 }
 
 if [ ! -d "$CLAUDE_DIR" ]; then
@@ -64,28 +70,32 @@ for dir in "$CLAUDE_DIR"/*/; do
     [ "$LOCAL_COUNT" -eq 0 ] && continue
 
     rsync -az \
-        -e "$(ssh_mit "$SCHLUESSEL_ANTON")" \
+        -e "$(ssh_mit anton "$SCHLUESSEL_ANTON")" \
         --include='*.jsonl' \
         --exclude='*' \
         "$dir" "$HOST:" || FEHLER=$((FEHLER + 1))
 done
 
 if [ "$FEHLER" -gt 0 ]; then
-    echo "WARNUNG: $FEHLER von $DIRS Projektordnern nicht uebertragen"
+    echo "FEHLER: $FEHLER von $DIRS Projektordnern nicht uebertragen"
 else
     echo "Done. $COUNT sessions synced."
 fi
+CLAUDE_FEHLER=$FEHLER
 
 if [ -d "$CODEX_DIR" ]; then
     CODEX_COUNT=$(find "$CODEX_DIR" -name '*.jsonl' 2>/dev/null | wc -l)
 
     if [ "$CODEX_COUNT" -gt 0 ]; then
         if [ ! -f "$SCHLUESSEL_CODEX" ]; then
-            echo "Codex uebersprungen: $SCHLUESSEL_CODEX fehlt"
+            # Es gibt Codex-Sitzungen, aber keinen Schluessel dafuer. Das
+            # ist kein Ueberspringen, das ist ein Fehlschlag.
+            echo "FEHLER: $CODEX_COUNT Codex-Sitzungen, aber $SCHLUESSEL_CODEX fehlt"
+            FEHLER=$((FEHLER + 1))
         else
             echo "Syncing $CODEX_COUNT Codex sessions..."
             if rsync -az \
-                -e "$(ssh_mit "$SCHLUESSEL_CODEX")" \
+                -e "$(ssh_mit codex "$SCHLUESSEL_CODEX")" \
                 --include='*/' \
                 --include='*.jsonl' \
                 --exclude='*' \
@@ -93,7 +103,8 @@ if [ -d "$CODEX_DIR" ]; then
             then
                 echo "Done. $CODEX_COUNT Codex sessions synced."
             else
-                echo "WARNUNG: Codex-Sitzungen nicht uebertragen"
+                echo "FEHLER: Codex-Sitzungen nicht uebertragen"
+                FEHLER=$((FEHLER + 1))
             fi
         fi
     else
@@ -103,6 +114,11 @@ else
     echo "Skipping Codex: $CODEX_DIR not found."
 fi
 
+# Der Rueckgabewert deckt BEIDE Teile ab. Ein Lauf, in dem nur Codex
+# scheitert, darf nicht als Erfolg enden - sonst meldet systemd gruen,
+# waehrend nichts ankommt. Genau so war dieser Sync monatelang unbemerkt
+# kaputt.
 if [ "$FEHLER" -gt 0 ]; then
+    echo "Lauf unvollstaendig: $CLAUDE_FEHLER bei Claude, $((FEHLER - CLAUDE_FEHLER)) bei Codex"
     exit 1
 fi
