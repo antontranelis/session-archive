@@ -41,9 +41,21 @@ SCHLUESSEL_CODEX="$HOME/.ssh/id_ed25519_eli_codex"
 # Schluessels, samt dessen erzwungenem Befehl. Die Codex-Sitzungen
 # landeten dann in archive/anton statt archive/codex, rsync meldete
 # Erfolg, und die Dateien laegen still am falschen Ort.
+#
+# OHNE DIE PERSOENLICHE SSH-KONFIGURATION. IdentitiesOnly=yes beschraenkt
+# auf die *angegebenen* Identitaeten - und dazu zaehlt auch das
+# IdentityFile aus ~/.ssh/config fuer diesen Host. Dort steht der
+# Nitrokey. Er wurde zuerst angeboten, der Server nahm ihn, und der hat
+# keinen erzwungenen Befehl: kein rrsync, "eli@host:" hiess schlicht Elis
+# Heimatverzeichnis. 384 Sitzungsdateien lagen am 21.09.2026 in
+# /home/eli/ statt im Archiv, rsync meldete Erfolg.
+#
+# -F /dev/null laesst die Konfiguration aus. Dann muss known_hosts
+# ausdruecklich genannt werden, sonst prueft ssh den Host gegen nichts.
 ssh_mit() {
     # $1 = Name des Kanals, $2 = Schluesseldatei
-    echo "ssh -i $2 -o IdentitiesOnly=yes" \
+    echo "ssh -F /dev/null -i $2 -o IdentitiesOnly=yes" \
+         "-o UserKnownHostsFile=$HOME/.ssh/known_hosts" \
          "-o ControlMaster=auto -o ControlPath=/tmp/eli-sync-$1-%r@%h -o ControlPersist=60"
 }
 
